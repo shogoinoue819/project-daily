@@ -159,6 +159,7 @@ export default function AppPage() {
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1)
   );
   const [dayDoc, setDayDoc] = useState<DayDoc>(defaultDayDoc);
+  const [hasDayDoc, setHasDayDoc] = useState(false);
   const [wakeTimeInput, setWakeTimeInput] = useState("");
   const [sleepTimeInput, setSleepTimeInput] = useState("");
   const [prevSleepTime, setPrevSleepTime] = useState<string | null>(null);
@@ -195,10 +196,12 @@ export default function AppPage() {
         setDayDoc(nextDoc);
         setWakeTimeInput(nextDoc.wakeTime ?? "");
         setSleepTimeInput(nextDoc.sleepTime ?? "");
+        setHasDayDoc(true);
       } else {
         setDayDoc(defaultDayDoc);
         setWakeTimeInput("");
         setSleepTimeInput("");
+        setHasDayDoc(false);
       }
       setSaveError(null);
     });
@@ -332,6 +335,8 @@ export default function AppPage() {
       return new Date(year, monthIndex, day);
     });
   }, [currentMonthDate]);
+
+  const hasMonthData = Object.keys(monthData).length > 0;
 
   const maxLines = isMobile ? 3 : 5;
 
@@ -616,6 +621,11 @@ export default function AppPage() {
             {monthLoading ? (
               <div className="mt-3 text-xs text-zinc-400">月データを読み込み中...</div>
             ) : null}
+            {!monthLoading && !monthError && !hasMonthData ? (
+              <div className="mt-3 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+                この月のデータはまだありません。
+              </div>
+            ) : null}
             <div className="mt-3 grid grid-cols-7 gap-2 text-xs">
               {calendarCells.map((date, index) => {
                 if (!date) {
@@ -686,6 +696,11 @@ export default function AppPage() {
             {saveError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
                 {saveError}
+              </div>
+            ) : null}
+            {!hasDayDoc && !saveError ? (
+              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+                この日の入力はまだありません。
               </div>
             ) : null}
 
