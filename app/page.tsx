@@ -1,30 +1,86 @@
+"use client";
+
+import {
+  GoogleAuthProvider,
+  getRedirectResult,
+  signInWithPopup,
+  signInWithRedirect,
+} from "firebase/auth";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { auth } from "@/lib/firebase/client";
+import { useAuth } from "@/lib/hooks/useAuth";
+
 export default function Home() {
+  const router = useRouter();
+  const { user, loading } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/app");
+    }
+  }, [loading, router, user]);
+
+  useEffect(() => {
+    const handleRedirect = async () => {
+      try {
+        await getRedirectResult(auth);
+      } catch (error) {
+        setErrorMessage("ログインに失敗しました。もう一度お試しください。");
+        console.error(error);
+      }
+    };
+
+    handleRedirect();
+  }, []);
+
+  const handleLogin = async () => {
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await signInWithPopup(auth, provider);
+      router.replace("/app");
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user") {
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: "select_account" });
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+      setErrorMessage("ログインに失敗しました。もう一度お試しください。");
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 text-zinc-900">
-      <main className="w-full max-w-3xl space-y-6 rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm">
+      <main className="w-full max-w-2xl space-y-6 rounded-2xl border border-zinc-200 bg-white p-10 text-center shadow-sm">
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-zinc-500">project-daily</p>
           <h1 className="text-3xl font-semibold tracking-tight">
-            Daily Routine Visualizer
+            Routine Calendar
           </h1>
           <p className="text-sm text-zinc-600">
-            月カレンダー×カテゴリフィルタで毎日のルーティンを一目で。
+            月カレンダーとカテゴリで、毎日のルーティンをひと目で。
           </p>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <a
-            href="/login"
-            className="inline-flex h-11 items-center justify-center rounded-full bg-zinc-900 px-6 text-sm font-semibold text-white transition hover:bg-zinc-800"
-          >
-            Login
-          </a>
-          <a
-            href="/app"
-            className="inline-flex h-11 items-center justify-center rounded-full border border-zinc-200 px-6 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50"
-          >
-            Open App
-          </a>
-        </div>
+        <button
+          type="button"
+          onClick={handleLogin}
+          disabled={submitting || loading}
+          className="inline-flex h-12 w-full items-center justify-center rounded-full bg-zinc-900 px-6 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400 sm:w-auto"
+        >
+          {submitting ? "ログイン中..." : "Googleでログイン"}
+        </button>
+        {errorMessage ? (
+          <div className="text-xs text-red-600">{errorMessage}</div>
+        ) : null}
       </main>
     </div>
   );

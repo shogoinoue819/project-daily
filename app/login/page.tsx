@@ -62,33 +62,26 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center px-6 py-16">
-        <div className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm">
+        <div className="space-y-6 rounded-2xl border border-zinc-200 bg-white p-10 text-center shadow-sm">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
-              Login
-            </p>
             <h1 className="text-2xl font-semibold tracking-tight">
-              project-dailyへようこそ
+              Routine Calendar
             </h1>
             <p className="text-sm text-zinc-600">
-              Googleログインのみ対応予定。フェーズ2で認証を接続します。
+              Googleアカウントでログインします。
             </p>
           </div>
           <button
             type="button"
             onClick={handleLogin}
             disabled={submitting || loading}
-            className="inline-flex h-11 w-full items-center justify-center rounded-full bg-zinc-900 px-6 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
+            className="inline-flex h-12 w-full items-center justify-center rounded-full bg-zinc-900 px-6 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
           >
             {submitting ? "ログイン中..." : "Googleでログイン"}
           </button>
           {errorMessage ? (
             <div className="text-xs text-red-600">{errorMessage}</div>
-          ) : (
-            <div className="text-xs text-zinc-500">
-              Googleアカウントでログインします。
-            </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
