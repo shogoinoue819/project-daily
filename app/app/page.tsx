@@ -7,7 +7,6 @@ import {
   Timestamp,
   collection,
   doc,
-  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -20,7 +19,8 @@ import { useAuth } from "@/lib/hooks/useAuth";
 
 const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
 
-type MealOption = "none" | "home" | "lab" | "out";
+type MealOption = "home" | "lab" | "out" | "other";
+type LegacyMealOption = MealOption | "none";
 
 type DayDoc = {
   date?: Timestamp;
@@ -52,10 +52,10 @@ const defaultDayDoc: DayDoc = {
 };
 
 const mealOptions: { value: MealOption; label: string }[] = [
-  { value: "none", label: "抜" },
   { value: "home", label: "自炊(家)" },
   { value: "lab", label: "自炊(研)" },
   { value: "out", label: "外食" },
+  { value: "other", label: "その他" },
 ];
 
 const filterGroups = [
@@ -81,10 +81,10 @@ const filterGroups = [
     id: "hygiene",
     label: "衛生",
     items: [
-      { id: "brushAM", label: "歯磨き AM" },
-      { id: "brushPM", label: "歯磨き PM" },
-      { id: "showerAM", label: "シャワー AM" },
-      { id: "showerPM", label: "シャワー PM" },
+      { id: "brushAM", label: "歯磨き(朝)" },
+      { id: "brushPM", label: "歯磨き(夜)" },
+      { id: "showerAM", label: "シャワー(朝)" },
+      { id: "showerPM", label: "シャワー(夜)" },
     ],
   },
   {
@@ -96,6 +96,85 @@ const filterGroups = [
 
 type FilterGroup = (typeof filterGroups)[number];
 type FilterItemId = FilterGroup["items"][number]["id"];
+const colorPalette = [
+  { id: "blue", label: "Blue", chip: "bg-sky-50 text-sky-700", dot: "bg-sky-500" },
+  {
+    id: "green",
+    label: "Green",
+    chip: "bg-emerald-50 text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  {
+    id: "yellow",
+    label: "Yellow",
+    chip: "bg-amber-50 text-amber-700",
+    dot: "bg-amber-500",
+  },
+  {
+    id: "orange",
+    label: "Orange",
+    chip: "bg-orange-50 text-orange-700",
+    dot: "bg-orange-500",
+  },
+  { id: "red", label: "Red", chip: "bg-rose-50 text-rose-700", dot: "bg-rose-500" },
+  {
+    id: "purple",
+    label: "Purple",
+    chip: "bg-violet-50 text-violet-700",
+    dot: "bg-violet-500",
+  },
+  {
+    id: "pink",
+    label: "Pink",
+    chip: "bg-pink-50 text-pink-700",
+    dot: "bg-pink-500",
+  },
+  {
+    id: "indigo",
+    label: "Indigo",
+    chip: "bg-indigo-50 text-indigo-700",
+    dot: "bg-indigo-500",
+  },
+  {
+    id: "teal",
+    label: "Teal",
+    chip: "bg-teal-50 text-teal-700",
+    dot: "bg-teal-500",
+  },
+  {
+    id: "cyan",
+    label: "Cyan",
+    chip: "bg-cyan-50 text-cyan-700",
+    dot: "bg-cyan-500",
+  },
+  {
+    id: "lime",
+    label: "Lime",
+    chip: "bg-lime-50 text-lime-700",
+    dot: "bg-lime-500",
+  },
+  { id: "gray", label: "Gray", chip: "bg-zinc-100 text-zinc-700", dot: "bg-zinc-500" },
+] as const;
+
+type ColorId = (typeof colorPalette)[number]["id"];
+
+const colorStyles = Object.fromEntries(
+  colorPalette.map((color) => [color.id, color])
+) as Record<ColorId, (typeof colorPalette)[number]>;
+
+const defaultItemColors: Record<FilterItemId, ColorId> = {
+  wakeTime: "blue",
+  sleepTime: "blue",
+  sleepDuration: "blue",
+  breakfast: "orange",
+  lunch: "orange",
+  dinner: "orange",
+  brushAM: "teal",
+  brushPM: "teal",
+  showerAM: "indigo",
+  showerPM: "indigo",
+  workout: "purple",
+};
 
 const initialFilters = Object.fromEntries(
   filterGroups.flatMap((group) => group.items.map((item) => [item.id, true]))
@@ -115,6 +194,22 @@ const parseTime = (value: string) => {
     return null;
   }
   return { hour, minute };
+};
+
+const normalizeTimeToStep = (value: string, stepMinutes = 5) => {
+  if (!value) {
+    return "";
+  }
+  const parsed = parseTime(value);
+  if (!parsed) {
+    return "";
+  }
+  const total = parsed.hour * 60 + parsed.minute;
+  const rounded = Math.round(total / stepMinutes) * stepMinutes;
+  const normalized = Math.min(Math.max(rounded, 0), 24 * 60 - stepMinutes);
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
 const computeSleepDuration = (prevSleep: string, wake: string, baseDate: Date) => {
@@ -151,6 +246,32 @@ const computeSleepDuration = (prevSleep: string, wake: string, baseDate: Date) =
   return `${hours}h${minutes}m`;
 };
 
+const normalizeMealValue = (value?: LegacyMealOption | null) => {
+  if (!value || value === "none") {
+    return null;
+  }
+  return value;
+};
+
+const normalizeDayDoc = (
+  data?: Partial<
+    DayDoc & {
+      lunch?: LegacyMealOption | null;
+      dinner?: LegacyMealOption | null;
+    }
+  >
+) => {
+  if (!data) {
+    return { ...defaultDayDoc };
+  }
+  return {
+    ...defaultDayDoc,
+    ...data,
+    lunch: normalizeMealValue(data.lunch),
+    dinner: normalizeMealValue(data.dinner),
+  };
+};
+
 export default function AppPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
@@ -162,14 +283,22 @@ export default function AppPage() {
   const [hasDayDoc, setHasDayDoc] = useState(false);
   const [wakeTimeInput, setWakeTimeInput] = useState("");
   const [sleepTimeInput, setSleepTimeInput] = useState("");
-  const [prevSleepTime, setPrevSleepTime] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const wakeTimeRef = useRef<HTMLInputElement | null>(null);
+  const sleepTimeRef = useRef<HTMLInputElement | null>(null);
+  const [, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [monthData, setMonthData] = useState<Record<string, DayDoc>>({});
   const [monthLoading, setMonthLoading] = useState(false);
   const [monthError, setMonthError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Record<FilterItemId, boolean>>(initialFilters);
   const [isMobile, setIsMobile] = useState(false);
+  const [itemColors, setItemColors] = useState<Record<FilterItemId, ColorId>>(
+    defaultItemColors
+  );
+  const [colorPickerOpen, setColorPickerOpen] = useState<FilterItemId | null>(
+    null
+  );
+  const colorPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -192,7 +321,7 @@ export default function AppPage() {
     const unsubscribe = onSnapshot(ref, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data() as Partial<DayDoc>;
-        const nextDoc = { ...defaultDayDoc, ...data };
+        const nextDoc = normalizeDayDoc(data);
         setDayDoc(nextDoc);
         setWakeTimeInput(nextDoc.wakeTime ?? "");
         setSleepTimeInput(nextDoc.sleepTime ?? "");
@@ -209,27 +338,6 @@ export default function AppPage() {
     return () => unsubscribe();
   }, [selectedDate, user]);
 
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    const loadPrev = async () => {
-      const prevDate = new Date(selectedDate);
-      prevDate.setDate(prevDate.getDate() - 1);
-      const prevId = formatDateId(prevDate);
-      const prevRef = doc(db, "users", user.uid, "days", prevId);
-      const snapshot = await getDoc(prevRef);
-      if (snapshot.exists()) {
-        const data = snapshot.data() as Partial<DayDoc>;
-        setPrevSleepTime(data.sleepTime ?? null);
-      } else {
-        setPrevSleepTime(null);
-      }
-    };
-
-    loadPrev();
-  }, [selectedDate, user]);
 
   useEffect(() => {
     if (!user) {
@@ -265,7 +373,7 @@ export default function AppPage() {
         const next: Record<string, DayDoc> = {};
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Partial<DayDoc>;
-          next[docSnap.id] = { ...defaultDayDoc, ...data };
+          next[docSnap.id] = normalizeDayDoc(data);
         });
         setMonthData(next);
         setMonthLoading(false);
@@ -288,6 +396,44 @@ export default function AppPage() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    const settingsRef = doc(db, "users", user.uid, "settings", "ui");
+    const unsubscribe = onSnapshot(settingsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data() as {
+          itemColors?: Partial<Record<FilterItemId, ColorId>>;
+        };
+        setItemColors({
+          ...defaultItemColors,
+          ...data.itemColors,
+        });
+      } else {
+        setItemColors(defaultItemColors);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (!colorPickerOpen) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!colorPickerRef.current) {
+        return;
+      }
+      if (!colorPickerRef.current.contains(event.target as Node)) {
+        setColorPickerOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [colorPickerOpen]);
 
   const saveFields = async (fields: Partial<DayDoc>) => {
     if (!user) {
@@ -315,13 +461,6 @@ export default function AppPage() {
     }
   };
 
-  const sleepDuration = useMemo(() => {
-    if (!prevSleepTime || !dayDoc.wakeTime) {
-      return null;
-    }
-    return computeSleepDuration(prevSleepTime, dayDoc.wakeTime, selectedDate);
-  }, [dayDoc.wakeTime, prevSleepTime, selectedDate]);
-
   const calendarCells = useMemo(() => {
     const year = currentMonthDate.getFullYear();
     const monthIndex = currentMonthDate.getMonth();
@@ -338,13 +477,19 @@ export default function AppPage() {
 
   const hasMonthData = Object.keys(monthData).length > 0;
 
-  const maxLines = isMobile ? 3 : 5;
+  const maxLines = 3;
 
+  const mealFullLabel: Record<MealOption, string> = {
+    home: "自炊(家)",
+    lab: "自炊(研)",
+    out: "外食",
+    other: "その他",
+  };
   const mealShortLabel: Record<MealOption, string> = {
-    none: "抜",
     home: "家",
     lab: "研",
     out: "外",
+    other: "他",
   };
 
   const buildChips = (date: Date) => {
@@ -355,18 +500,32 @@ export default function AppPage() {
     }
 
     const chips: { id: string; label: string; className: string }[] = [];
+    const wakeColor = colorStyles[itemColors.wakeTime].chip;
+    const sleepColor = colorStyles[itemColors.sleepTime].chip;
+    const durationColor = colorStyles[itemColors.sleepDuration].chip;
+    const breakfastColor = colorStyles[itemColors.breakfast].chip;
+    const lunchColor = colorStyles[itemColors.lunch].chip;
+    const dinnerColor = colorStyles[itemColors.dinner].chip;
+    const brushAmColor = colorStyles[itemColors.brushAM].chip;
+    const brushPmColor = colorStyles[itemColors.brushPM].chip;
+    const showerAmColor = colorStyles[itemColors.showerAM].chip;
+    const showerPmColor = colorStyles[itemColors.showerPM].chip;
+    const workoutColor = colorStyles[itemColors.workout].chip;
+    const mealLabel = (value: MealOption) =>
+      isMobile ? mealShortLabel[value] : mealFullLabel[value];
+
     if (filters.wakeTime && docData.wakeTime) {
       chips.push({
         id: `${dateId}-wake`,
         label: `起 ${docData.wakeTime}`,
-        className: "bg-sky-50 text-sky-700",
+        className: wakeColor,
       });
     }
     if (filters.sleepTime && docData.sleepTime) {
       chips.push({
         id: `${dateId}-sleep`,
         label: `寝 ${docData.sleepTime}`,
-        className: "bg-sky-50 text-sky-700",
+        className: sleepColor,
       });
     }
     if (filters.sleepDuration && docData.wakeTime) {
@@ -379,7 +538,7 @@ export default function AppPage() {
           chips.push({
             id: `${dateId}-duration`,
             label: `睡 ${duration}`,
-            className: "bg-sky-50 text-sky-700",
+            className: durationColor,
           });
         }
       }
@@ -388,56 +547,56 @@ export default function AppPage() {
       chips.push({
         id: `${dateId}-breakfast`,
         label: "☕",
-        className: "bg-amber-50 text-amber-700",
+        className: breakfastColor,
       });
     }
     if (filters.lunch && docData.lunch) {
       chips.push({
         id: `${dateId}-lunch`,
-        label: `昼 ${mealShortLabel[docData.lunch]}`,
-        className: "bg-amber-50 text-amber-700",
+        label: `昼: ${mealLabel(docData.lunch)}`,
+        className: lunchColor,
       });
     }
     if (filters.dinner && docData.dinner) {
       chips.push({
         id: `${dateId}-dinner`,
-        label: `夜 ${mealShortLabel[docData.dinner]}`,
-        className: "bg-amber-50 text-amber-700",
+        label: `夜: ${mealLabel(docData.dinner)}`,
+        className: dinnerColor,
       });
     }
     if (filters.brushAM && docData.brushAM) {
       chips.push({
         id: `${dateId}-brush-am`,
-        label: "🪥 AM",
-        className: "bg-emerald-50 text-emerald-700",
+        label: "🦷(朝)",
+        className: brushAmColor,
       });
     }
     if (filters.brushPM && docData.brushPM) {
       chips.push({
         id: `${dateId}-brush-pm`,
-        label: "🪥 PM",
-        className: "bg-emerald-50 text-emerald-700",
+        label: "🦷(夜)",
+        className: brushPmColor,
       });
     }
     if (filters.showerAM && docData.showerAM) {
       chips.push({
         id: `${dateId}-shower-am`,
-        label: "🛀 AM",
-        className: "bg-indigo-50 text-indigo-700",
+        label: "🛀(朝)",
+        className: showerAmColor,
       });
     }
     if (filters.showerPM && docData.showerPM) {
       chips.push({
         id: `${dateId}-shower-pm`,
-        label: "🛀 PM",
-        className: "bg-indigo-50 text-indigo-700",
+        label: "🛀(夜)",
+        className: showerPmColor,
       });
     }
     if (filters.workout && docData.workout) {
       chips.push({
         id: `${dateId}-workout`,
         label: "💪",
-        className: "bg-violet-50 text-violet-700",
+        className: workoutColor,
       });
     }
     return chips;
@@ -455,6 +614,20 @@ export default function AppPage() {
 
   const updateFilter = (id: FilterItemId, checked: boolean) => {
     setFilters((prev) => ({ ...prev, [id]: checked }));
+  };
+
+  const updateItemColor = async (itemId: FilterItemId, colorId: ColorId) => {
+    setColorPickerOpen(null);
+    setItemColors((prev) => {
+      const next = { ...prev, [itemId]: colorId };
+      if (user) {
+        const settingsRef = doc(db, "users", user.uid, "settings", "ui");
+        setDoc(settingsRef, { itemColors: next }, { merge: true }).catch((error) =>
+          console.error(error)
+        );
+      }
+      return next;
+    });
   };
 
   const ParentCheckbox = ({
@@ -490,6 +663,19 @@ export default function AppPage() {
     setCurrentMonthDate(new Date(now.getFullYear(), now.getMonth(), 1));
   };
 
+  const openTimePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
+    if (!ref.current) {
+      return;
+    }
+    const input = ref.current as HTMLInputElement & { showPicker?: () => void };
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+    } else {
+      input.focus();
+      input.click();
+    }
+  };
+
   const shiftMonth = (delta: number) => {
     const next = new Date(
       currentMonthDate.getFullYear(),
@@ -501,6 +687,7 @@ export default function AppPage() {
   };
 
   const selectedDateId = formatDateId(selectedDate);
+  const displayDate = `${selectedDate.getFullYear()}/${selectedDate.getMonth() + 1}/${selectedDate.getDate()}`;
 
   if (loading) {
     return (
@@ -517,12 +704,12 @@ export default function AppPage() {
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-4 px-6 py-2">
           <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
-              project-daily
+            <h1 className="text-lg font-semibold">Routine Calendar</h1>
+            <p className="text-xs text-zinc-500">
+              月カレンダーで毎日のルーティンを整理
             </p>
-            <h1 className="text-lg font-semibold">Daily Routine Dashboard</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -563,7 +750,7 @@ export default function AppPage() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-4 px-6 py-6 lg:flex-row">
+      <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-6 py-3 lg:flex-row">
         <section className="w-full lg:w-64">
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
@@ -586,17 +773,55 @@ export default function AppPage() {
                     </label>
                     <div className="space-y-1 pl-6 text-xs text-zinc-500">
                       {group.items.map((item) => (
-                        <label key={item.id} className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={filters[item.id]}
-                            onChange={(event) =>
-                              updateFilter(item.id, event.target.checked)
-                            }
-                            className="h-3.5 w-3.5 rounded border-zinc-300"
-                          />
-                          {item.label}
-                        </label>
+                        <div key={item.id} className="flex items-center justify-between">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={filters[item.id]}
+                              onChange={(event) =>
+                                updateFilter(item.id, event.target.checked)
+                              }
+                              className="h-3.5 w-3.5 rounded border-zinc-300"
+                            />
+                            {item.label}
+                          </label>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setColorPickerOpen(
+                                  colorPickerOpen === item.id ? null : item.id
+                                )
+                              }
+                              className={`h-3.5 w-3.5 rounded-full border border-white shadow ${colorStyles[itemColors[item.id]].dot}`}
+                              aria-label={`${item.label}の色を選択`}
+                            />
+                            {colorPickerOpen === item.id ? (
+                              <div
+                                ref={colorPickerRef}
+                                className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
+                              >
+                                <div className="grid grid-cols-4 gap-2">
+                                  {colorPalette.map((color) => (
+                                    <button
+                                      key={color.id}
+                                      type="button"
+                                      onClick={() =>
+                                        updateItemColor(item.id, color.id as ColorId)
+                                      }
+                                      className={`h-6 w-6 rounded-full border ${
+                                        color.id === itemColors[item.id]
+                                          ? "border-zinc-900"
+                                          : "border-transparent"
+                                      } ${color.dot}`}
+                                      aria-label={`${color.label}を選択`}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -626,13 +851,13 @@ export default function AppPage() {
                 この月のデータはまだありません。
               </div>
             ) : null}
-            <div className="mt-3 grid grid-cols-7 gap-2 text-xs">
+            <div className="mt-3 grid h-[560px] grid-cols-7 grid-rows-6 border border-zinc-200 text-xs sm:h-[640px] lg:h-[720px]">
               {calendarCells.map((date, index) => {
                 if (!date) {
                   return (
                     <div
                       key={`empty-${index}`}
-                      className="min-h-20 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/40"
+                      className="h-full border-l border-t border-zinc-200 bg-zinc-50/40"
                     />
                   );
                 }
@@ -646,10 +871,10 @@ export default function AppPage() {
                     key={dateId}
                     type="button"
                     onClick={() => setSelectedDate(date)}
-                    className={`flex min-h-20 flex-col gap-1 rounded-xl border p-2 text-left transition ${
+                    className={`flex h-full flex-col gap-1 overflow-hidden border-l border-t p-2 text-left transition ${
                       isSelected
-                        ? "border-zinc-900 bg-zinc-900/5"
-                        : "border-zinc-200 bg-zinc-50 hover:border-zinc-400"
+                        ? "border-zinc-200 bg-zinc-900/5 ring-1 ring-inset ring-zinc-900"
+                        : "border-zinc-200 bg-white hover:bg-zinc-50"
                     }`}
                   >
                     <div className="text-sm font-semibold text-zinc-800">
@@ -677,21 +902,10 @@ export default function AppPage() {
           </div>
         </section>
 
-        <section className="w-full lg:w-80">
+        <section className="w-full lg:w-96">
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
-                  Selected
-                </p>
-                <h2 className="text-lg font-semibold">{selectedDateId}</h2>
-                {sleepDuration ? (
-                  <p className="text-xs text-zinc-500">睡眠 {sleepDuration}</p>
-                ) : null}
-              </div>
-              <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
-                {saving ? "保存中..." : "自動保存"}
-              </span>
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold">{displayDate}</h2>
             </div>
             {saveError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
@@ -706,24 +920,49 @@ export default function AppPage() {
 
             <div className="space-y-6 text-sm">
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold uppercase text-zinc-400">
-                  朝
-                </h3>
-                <label className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">朝</h3>
+                </div>
+                <label className="flex items-center justify-between gap-3">
                   起床時刻
-                  <input
-                    type="time"
-                    value={wakeTimeInput}
-                    onChange={(event) => setWakeTimeInput(event.target.value)}
-                    onBlur={() => {
-                      const nextValue = wakeTimeInput.trim() === "" ? null : wakeTimeInput;
-                      if (nextValue !== dayDoc.wakeTime) {
-                        setDayDoc((prev) => ({ ...prev, wakeTime: nextValue }));
-                        saveFields({ wakeTime: nextValue });
-                      }
-                    }}
-                    className="rounded border border-zinc-200 px-2 py-1 text-xs"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={wakeTimeRef}
+                      type="time"
+                      value={wakeTimeInput}
+                      onChange={(event) => setWakeTimeInput(event.target.value)}
+                      onBlur={() => {
+                        const normalized = normalizeTimeToStep(wakeTimeInput);
+                        setWakeTimeInput(normalized);
+                        const nextValue = normalized === "" ? null : normalized;
+                        if (nextValue !== dayDoc.wakeTime) {
+                          setDayDoc((prev) => ({ ...prev, wakeTime: nextValue }));
+                          saveFields({ wakeTime: nextValue });
+                        }
+                      }}
+                      step={300}
+                      className="h-10 w-32 rounded border border-zinc-200 px-3 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => openTimePicker(wakeTimeRef)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+                      aria-label="起床時刻のピッカーを開く"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v5l3 2" />
+                      </svg>
+                    </button>
+                  </div>
                 </label>
                 <label className="flex items-center gap-2">
                   <input
@@ -749,7 +988,7 @@ export default function AppPage() {
                     }}
                     className="h-4 w-4 rounded border-zinc-300"
                   />
-                  歯磨き AM
+                  歯磨き 🦷
                 </label>
                 <label className="flex items-center gap-2">
                   <input
@@ -762,14 +1001,16 @@ export default function AppPage() {
                     }}
                     className="h-4 w-4 rounded border-zinc-300"
                   />
-                  シャワー AM
+                  シャワー 🛀
                 </label>
               </div>
 
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold uppercase text-zinc-400">
-                  昼
-                </h3>
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">昼</h3>
+                </div>
+                <div className="text-xs font-semibold text-zinc-500">昼食</div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
@@ -794,9 +1035,11 @@ export default function AppPage() {
               </div>
 
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold uppercase text-zinc-400">
-                  夜
-                </h3>
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">夜</h3>
+                </div>
+                <div className="text-xs font-semibold text-zinc-500">夕食</div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
@@ -829,7 +1072,7 @@ export default function AppPage() {
                     }}
                     className="h-4 w-4 rounded border-zinc-300"
                   />
-                  歯磨き PM
+                  歯磨き 🦷
                 </label>
                 <label className="flex items-center gap-2">
                   <input
@@ -842,30 +1085,55 @@ export default function AppPage() {
                     }}
                     className="h-4 w-4 rounded border-zinc-300"
                   />
-                  シャワー PM
+                  シャワー 🛀
                 </label>
-                <label className="flex items-center justify-between">
+                <label className="flex items-center justify-between gap-3">
                   就寝時刻
-                  <input
-                    type="time"
-                    value={sleepTimeInput}
-                    onChange={(event) => setSleepTimeInput(event.target.value)}
-                    onBlur={() => {
-                      const nextValue = sleepTimeInput.trim() === "" ? null : sleepTimeInput;
-                      if (nextValue !== dayDoc.sleepTime) {
-                        setDayDoc((prev) => ({ ...prev, sleepTime: nextValue }));
-                        saveFields({ sleepTime: nextValue });
-                      }
-                    }}
-                    className="rounded border border-zinc-200 px-2 py-1 text-xs"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={sleepTimeRef}
+                      type="time"
+                      value={sleepTimeInput}
+                      onChange={(event) => setSleepTimeInput(event.target.value)}
+                      onBlur={() => {
+                        const normalized = normalizeTimeToStep(sleepTimeInput);
+                        setSleepTimeInput(normalized);
+                        const nextValue = normalized === "" ? null : normalized;
+                        if (nextValue !== dayDoc.sleepTime) {
+                          setDayDoc((prev) => ({ ...prev, sleepTime: nextValue }));
+                          saveFields({ sleepTime: nextValue });
+                        }
+                      }}
+                      step={300}
+                      className="h-10 w-32 rounded border border-zinc-200 px-3 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => openTimePicker(sleepTimeRef)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+                      aria-label="就寝時刻のピッカーを開く"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v5l3 2" />
+                      </svg>
+                    </button>
+                  </div>
                 </label>
               </div>
 
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold uppercase text-zinc-400">
-                  その他
-                </h3>
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">その他</h3>
+                </div>
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"

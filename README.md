@@ -1,4 +1,4 @@
-# project-daily
+# Routine Calendar
 
 毎日のルーティンを「月カレンダー × カテゴリ/項目フィルタ」で可視化するアプリです。
 
@@ -27,7 +27,7 @@ npm install
 npm run dev
 ```
 
-`http://localhost:3000/login` でGoogleログイン後に `/app` が表示されます。
+`http://localhost:3000` でGoogleログイン後に `/app` が表示されます。
 
 ## Firebase 注意点
 
