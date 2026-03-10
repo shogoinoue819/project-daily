@@ -321,6 +321,8 @@ export default function AppPage() {
   const [monthError, setMonthError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Record<FilterItemId, boolean>>(initialFilters);
   const [isMobile, setIsMobile] = useState(false);
+  const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
+  const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const [itemColors, setItemColors] = useState<Record<FilterItemId, ColorId>>(
     defaultItemColors
   );
@@ -434,6 +436,28 @@ export default function AppPage() {
   }, []);
 
   useEffect(() => {
+    if (!isMobile) {
+      setLeftDrawerOpen(false);
+      setRightDrawerOpen(false);
+    }
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) {
+      return;
+    }
+    if (rightDrawerOpen) {
+      const original = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = original;
+      };
+    }
+    document.body.style.overflow = "";
+    return undefined;
+  }, [isMobile, rightDrawerOpen]);
+
+  useEffect(() => {
     if (!user) {
       return;
     }
@@ -532,7 +556,7 @@ export default function AppPage() {
     return { cells, weeks };
   }, [currentMonthDate]);
 
-  const maxLines = 4;
+  const maxLines = isMobile ? 3 : 4;
 
   const mealFullLabel: Record<MealOption, string> = {
     home: "自炊(家)",
@@ -858,12 +882,31 @@ export default function AppPage() {
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-4 px-6 py-2">
-          <div className="space-y-1">
-            <h1 className="text-lg font-semibold">Routine Calendar</h1>
-            <p className="text-xs text-zinc-500">
-              月カレンダーで毎日のルーティンを整理
-            </p>
+        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-4 px-4 py-2 sm:px-6">
+          <div className="flex items-start gap-3">
+            <button
+              type="button"
+              onClick={() => setLeftDrawerOpen((prev) => !prev)}
+              className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50 sm:hidden"
+              aria-label="メニューを開く"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                aria-hidden="true"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <div className="space-y-1">
+              <h1 className="text-lg font-semibold">Routine Calendar</h1>
+              <p className="text-xs text-zinc-500">
+                月カレンダーで毎日のルーティンを整理
+              </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -904,8 +947,8 @@ export default function AppPage() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-6 py-3 lg:flex-row">
-        <section className="w-full lg:w-64">
+      <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-4 py-3 lg:flex-row lg:px-6">
+        <section className="hidden w-full lg:block lg:w-64">
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
             <div className="mt-4 space-y-3 text-sm text-zinc-700">
@@ -1019,7 +1062,12 @@ export default function AppPage() {
                   <button
                     key={dateId}
                     type="button"
-                    onClick={() => setSelectedDate(date)}
+                    onClick={() => {
+                      setSelectedDate(date);
+                      if (isMobile) {
+                        setRightDrawerOpen(true);
+                      }
+                    }}
                     className={`flex h-full flex-col gap-1 overflow-hidden border-l border-t p-2 text-left transition ${
                       isSelected
                         ? "border-zinc-200 bg-zinc-900/5 ring-1 ring-inset ring-zinc-900"
@@ -1055,7 +1103,7 @@ export default function AppPage() {
           </div>
         </section>
 
-        <section className="w-full lg:w-96">
+        <section className="hidden w-full lg:block lg:w-96">
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">{displayDate}</h2>
@@ -1439,6 +1487,505 @@ export default function AppPage() {
           </div>
         </section>
       </main>
+      {isMobile ? (
+        <>
+          <div
+            className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${
+              leftDrawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+            onClick={() => setLeftDrawerOpen(false)}
+          />
+          <aside
+            className={`fixed inset-y-0 left-0 z-50 w-72 transform border-r border-zinc-200 bg-white p-4 shadow-lg transition-transform ${
+              leftDrawerOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
+              <button
+                type="button"
+                onClick={() => setLeftDrawerOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-200 text-zinc-500"
+                aria-label="メニューを閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3 text-sm text-zinc-700">
+              {filterGroups.map((group) => {
+                const checkedCount = group.items.filter(
+                  (item) => filters[item.id]
+                ).length;
+                const allChecked = checkedCount === group.items.length;
+                const indeterminate = checkedCount > 0 && !allChecked;
+                return (
+                  <div key={group.id} className="space-y-2">
+                    <label className="flex items-center gap-2 font-medium">
+                      <ParentCheckbox
+                        checked={allChecked}
+                        indeterminate={indeterminate}
+                        onChange={(checked) => toggleGroup(group, checked)}
+                      />
+                      {group.label}
+                    </label>
+                    <div className="space-y-1 pl-6 text-xs text-zinc-500">
+                      {group.items.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={filters[item.id]}
+                              onChange={(event) =>
+                                updateFilter(item.id, event.target.checked)
+                              }
+                              className="h-3.5 w-3.5 rounded border-zinc-300"
+                            />
+                            {item.label}
+                          </label>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setColorPickerOpen(
+                                  colorPickerOpen === item.id ? null : item.id
+                                )
+                              }
+                              className={`h-3.5 w-3.5 rounded-full border border-white shadow ${colorStyles[itemColors[item.id]].dot}`}
+                              aria-label={`${item.label}の色を選択`}
+                            />
+                            {colorPickerOpen === item.id ? (
+                              <div
+                                ref={colorPickerRef}
+                                className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
+                              >
+                                <div className="grid grid-cols-4 gap-2">
+                                  {colorPalette.map((color) => (
+                                    <button
+                                      key={color.id}
+                                      type="button"
+                                      onClick={() =>
+                                        updateItemColor(item.id, color.id as ColorId)
+                                      }
+                                      className={`h-6 w-6 rounded-full border ${
+                                        color.id === itemColors[item.id]
+                                          ? "border-zinc-900"
+                                          : "border-transparent"
+                                      } ${color.dot}`}
+                                      aria-label={`${color.label}を選択`}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </aside>
+          <div
+            className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${
+              rightDrawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+            onClick={() => setRightDrawerOpen(false)}
+          />
+          <aside
+            className={`fixed inset-y-0 right-0 z-50 w-full max-w-sm transform border-l border-zinc-200 bg-white p-4 shadow-lg transition-transform ${
+              rightDrawerOpen ? "translate-x-0" : "translate-x-full"
+            }`}
+          >
+            <div className="h-full overflow-y-auto">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">{displayDate}</h2>
+              <button
+                type="button"
+                onClick={() => setRightDrawerOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-200 text-zinc-500"
+                aria-label="パネルを閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            {!hasDayDoc ? (
+              <div className="mb-3 text-[11px] font-semibold text-zinc-500">未入力</div>
+            ) : null}
+            {saveError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                {saveError}
+              </div>
+            ) : null}
+            <div className="space-y-6 text-sm pb-6">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">朝</h3>
+                </div>
+                <label className="flex items-center justify-between gap-3">
+                  起床時刻
+                  <div className="relative flex items-center gap-2">
+                    <div className="flex h-10 items-center gap-1 rounded border border-zinc-200 px-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="hh"
+                        value={wakeHourInput}
+                        onChange={(event) =>
+                          updateManualTime("wake", "hour", event.target.value)
+                        }
+                        onBlur={() => commitManualTime("wake")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                      <span className="text-xs text-zinc-400">:</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="mm"
+                        value={wakeMinuteInput}
+                        onChange={(event) =>
+                          updateManualTime("wake", "minute", event.target.value)
+                        }
+                        onBlur={() => commitManualTime("wake")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openTimePicker("wake")}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+                      aria-label="起床時刻のピッカーを開く"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v5l3 2" />
+                      </svg>
+                    </button>
+                    {timePickerOpen === "wake" && timePickerValue ? (
+                      <div
+                        ref={timePickerRef}
+                        className="absolute right-0 z-20 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg"
+                      >
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              時
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.hours.map((hour) => (
+                                <button
+                                  key={hour}
+                                  type="button"
+                                  onClick={() => {
+                                    const minute = timePickerValue.minute;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("wake", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.hour === hour
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(hour).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              分
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.minutes.map((minute) => (
+                                <button
+                                  key={minute}
+                                  type="button"
+                                  onClick={() => {
+                                    const hour = timePickerValue.hour;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("wake", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.minute === minute
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(minute).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </label>
+                <label className="flex w-fit items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dayDoc.breakfast}
+                    onChange={() => {
+                      const nextValue = !dayDoc.breakfast;
+                      setDayDoc((prev) => ({ ...prev, breakfast: nextValue }));
+                      saveFields({ breakfast: nextValue });
+                    }}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  朝食 ☕
+                </label>
+                <label className="flex w-fit items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dayDoc.brushAM}
+                    onChange={() => {
+                      const nextValue = !dayDoc.brushAM;
+                      setDayDoc((prev) => ({ ...prev, brushAM: nextValue }));
+                      saveFields({ brushAM: nextValue });
+                    }}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  歯磨き 🦷
+                </label>
+                <label className="flex w-fit items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dayDoc.showerAM}
+                    onChange={() => {
+                      const nextValue = !dayDoc.showerAM;
+                      setDayDoc((prev) => ({ ...prev, showerAM: nextValue }));
+                      saveFields({ showerAM: nextValue });
+                    }}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  シャワー 🛀
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">昼</h3>
+                </div>
+                <div className="text-xs font-semibold text-zinc-500">昼食</div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {mealOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        const nextValue =
+                          dayDoc.lunch === option.value ? null : option.value;
+                        setDayDoc((prev) => ({ ...prev, lunch: nextValue }));
+                        saveFields({ lunch: nextValue });
+                      }}
+                      className={`rounded-lg border px-3 py-2 ${
+                        dayDoc.lunch === option.value
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">夜</h3>
+                </div>
+                <div className="text-xs font-semibold text-zinc-500">夕食</div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {mealOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        const nextValue =
+                          dayDoc.dinner === option.value ? null : option.value;
+                        setDayDoc((prev) => ({ ...prev, dinner: nextValue }));
+                        saveFields({ dinner: nextValue });
+                      }}
+                      className={`rounded-lg border px-3 py-2 ${
+                        dayDoc.dinner === option.value
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex w-fit items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dayDoc.brushPM}
+                    onChange={() => {
+                      const nextValue = !dayDoc.brushPM;
+                      setDayDoc((prev) => ({ ...prev, brushPM: nextValue }));
+                      saveFields({ brushPM: nextValue });
+                    }}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  歯磨き 🦷
+                </label>
+                <label className="flex w-fit items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dayDoc.showerPM}
+                    onChange={() => {
+                      const nextValue = !dayDoc.showerPM;
+                      setDayDoc((prev) => ({ ...prev, showerPM: nextValue }));
+                      saveFields({ showerPM: nextValue });
+                    }}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  シャワー 🛀
+                </label>
+                <label className="flex items-center justify-between gap-3">
+                  就寝時刻
+                  <div className="relative flex items-center gap-2">
+                    <div className="flex h-10 items-center gap-1 rounded border border-zinc-200 px-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="hh"
+                        value={sleepHourInput}
+                        onChange={(event) =>
+                          updateManualTime("sleep", "hour", event.target.value)
+                        }
+                        onBlur={() => commitManualTime("sleep")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                      <span className="text-xs text-zinc-400">:</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="mm"
+                        value={sleepMinuteInput}
+                        onChange={(event) =>
+                          updateManualTime("sleep", "minute", event.target.value)
+                        }
+                        onBlur={() => commitManualTime("sleep")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openTimePicker("sleep")}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+                      aria-label="就寝時刻のピッカーを開く"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v5l3 2" />
+                      </svg>
+                    </button>
+                    {timePickerOpen === "sleep" && timePickerValue ? (
+                      <div
+                        ref={timePickerRef}
+                        className="absolute right-0 z-20 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg"
+                      >
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              時
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.hours.map((hour) => (
+                                <button
+                                  key={hour}
+                                  type="button"
+                                  onClick={() => {
+                                    const minute = timePickerValue.minute;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("sleep", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.hour === hour
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(hour).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              分
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.minutes.map((minute) => (
+                                <button
+                                  key={minute}
+                                  type="button"
+                                  onClick={() => {
+                                    const hour = timePickerValue.hour;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("sleep", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.minute === minute
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(minute).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">その他</h3>
+                </div>
+                <label className="flex w-fit items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dayDoc.workout}
+                    onChange={() => {
+                      const nextValue = !dayDoc.workout;
+                      setDayDoc((prev) => ({ ...prev, workout: nextValue }));
+                      saveFields({ workout: nextValue });
+                    }}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  筋トレ 💪
+                </label>
+              </div>
+            </div>
+            </div>
+          </aside>
+        </>
+      ) : null}
     </div>
   );
 }
