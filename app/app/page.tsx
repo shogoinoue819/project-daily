@@ -385,26 +385,21 @@ export default function AppPage() {
       return;
     }
 
-    const monthStart = new Date(
-      currentMonthDate.getFullYear(),
-      currentMonthDate.getMonth(),
-      1
-    );
-    const monthEnd = new Date(
-      currentMonthDate.getFullYear(),
-      currentMonthDate.getMonth() + 1,
-      0,
-      23,
-      59,
-      59,
-      999
-    );
+    const year = currentMonthDate.getFullYear();
+    const monthIndex = currentMonthDate.getMonth();
+    const firstDay = new Date(year, monthIndex, 1);
+    const startOffset = firstDay.getDay();
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const lastDay = new Date(year, monthIndex, daysInMonth);
+    const endOffset = 6 - lastDay.getDay();
+    const rangeStart = new Date(year, monthIndex, 1 - startOffset);
+    const rangeEnd = new Date(year, monthIndex, daysInMonth + endOffset, 23, 59, 59, 999);
 
     setMonthLoading(true);
     const monthQuery = query(
       collection(db, "users", user.uid, "days"),
-      where("date", ">=", Timestamp.fromDate(monthStart)),
-      where("date", "<=", Timestamp.fromDate(monthEnd)),
+      where("date", ">=", Timestamp.fromDate(rangeStart)),
+      where("date", "<=", Timestamp.fromDate(rangeEnd)),
       orderBy("date", "asc")
     );
 
@@ -518,23 +513,26 @@ export default function AppPage() {
     }
   };
 
-  const calendarCells = useMemo(() => {
+  const calendarMeta = useMemo(() => {
     const year = currentMonthDate.getFullYear();
     const monthIndex = currentMonthDate.getMonth();
+    const firstDay = new Date(year, monthIndex, 1);
+    const startOffset = firstDay.getDay();
     const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-    const startDow = new Date(year, monthIndex, 1).getDay();
-    return Array.from({ length: 42 }, (_, index) => {
-      const day = index - startDow + 1;
-      if (day < 1 || day > daysInMonth) {
-        return null;
-      }
-      return new Date(year, monthIndex, day);
+    const lastDay = new Date(year, monthIndex, daysInMonth);
+    const endOffset = 6 - lastDay.getDay();
+    const totalDays = daysInMonth + startOffset + endOffset;
+    const weeks = Math.ceil(totalDays / 7);
+    const startDate = new Date(year, monthIndex, 1 - startOffset);
+    const cells = Array.from({ length: weeks * 7 }, (_, index) => {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + index);
+      return date;
     });
+    return { cells, weeks };
   }, [currentMonthDate]);
 
-  const hasMonthData = Object.keys(monthData).length > 0;
-
-  const maxLines = 3;
+  const maxLines = 4;
 
   const mealFullLabel: Record<MealOption, string> = {
     home: "自炊(家)",
@@ -1002,26 +1000,21 @@ export default function AppPage() {
             {monthLoading ? (
               <div className="mt-3 text-xs text-zinc-400">月データを読み込み中...</div>
             ) : null}
-            {!monthLoading && !monthError && !hasMonthData ? (
-              <div className="mt-3 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-                この月のデータはまだありません。
-              </div>
-            ) : null}
-            <div className="mt-3 grid h-[560px] grid-cols-7 grid-rows-6 border border-zinc-200 text-xs sm:h-[640px] lg:h-[720px]">
-              {calendarCells.map((date, index) => {
-                if (!date) {
-                  return (
-                    <div
-                      key={`empty-${index}`}
-                      className="h-full border-l border-t border-zinc-200 bg-zinc-50/40"
-                    />
-                  );
-                }
+            <div
+              className="mt-3 grid grid-cols-7 border border-zinc-200 text-xs [--calendar-row-height:112px] sm:[--calendar-row-height:128px] lg:[--calendar-row-height:144px]"
+              style={{
+                gridTemplateRows: `repeat(${calendarMeta.weeks}, var(--calendar-row-height))`,
+              }}
+            >
+              {calendarMeta.cells.map((date) => {
                 const dateId = formatDateId(date);
                 const chips = buildChips(date);
                 const visibleChips = chips.slice(0, maxLines);
                 const extraCount = chips.length - visibleChips.length;
                 const isSelected = dateId === selectedDateId;
+                const isCurrentMonth =
+                  date.getFullYear() === currentMonthDate.getFullYear() &&
+                  date.getMonth() === currentMonthDate.getMonth();
                 return (
                   <button
                     key={dateId}
@@ -1033,7 +1026,11 @@ export default function AppPage() {
                         : "border-zinc-200 bg-white hover:bg-zinc-50"
                     }`}
                   >
-                    <div className="text-sm font-semibold text-zinc-800">
+                    <div
+                      className={`text-sm font-semibold ${
+                        isCurrentMonth ? "text-zinc-800" : "text-zinc-400"
+                      }`}
+                    >
                       {date.getDate()}
                     </div>
                     <div className="space-y-1 text-[11px] text-zinc-500">
