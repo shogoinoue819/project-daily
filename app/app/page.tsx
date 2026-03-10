@@ -901,7 +901,7 @@ export default function AppPage() {
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <div className="space-y-1">
+            <div className="hidden space-y-1 sm:block">
               <h1 className="text-lg font-semibold">Routine Calendar</h1>
               <p className="text-xs text-zinc-500">
                 月カレンダーで毎日のルーティンを整理
@@ -947,9 +947,9 @@ export default function AppPage() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-4 py-3 lg:flex-row lg:px-6">
+      <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-2 py-3 sm:px-4 lg:flex-row lg:px-6">
         <section className="hidden w-full lg:block lg:w-64">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
             <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
             <div className="mt-4 space-y-3 text-sm text-zinc-700">
               {filterGroups.map((group) => {
@@ -1044,7 +1044,7 @@ export default function AppPage() {
               <div className="mt-3 text-xs text-zinc-400">月データを読み込み中...</div>
             ) : null}
             <div
-              className="mt-3 grid grid-cols-7 border border-zinc-200 text-xs [--calendar-row-height:112px] sm:[--calendar-row-height:128px] lg:[--calendar-row-height:144px]"
+              className="mt-3 grid grid-cols-7 border border-zinc-200 text-xs [--calendar-row-height:122px] sm:[--calendar-row-height:128px] lg:[--calendar-row-height:144px]"
               style={{
                 gridTemplateRows: `repeat(${calendarMeta.weeks}, var(--calendar-row-height))`,
               }}
@@ -1501,7 +1501,12 @@ export default function AppPage() {
             }`}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900">
+                  Routine Calendar
+                </h2>
+                <p className="text-xs text-zinc-500">カテゴリ</p>
+              </div>
               <button
                 type="button"
                 onClick={() => setLeftDrawerOpen(false)}
