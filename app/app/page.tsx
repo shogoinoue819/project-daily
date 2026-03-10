@@ -212,6 +212,25 @@ const normalizeTimeToStep = (value: string, stepMinutes = 5) => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
+const timeOptions = {
+  hours: Array.from({ length: 24 }, (_, index) => index),
+  minutes: Array.from({ length: 12 }, (_, index) => index * 5),
+};
+
+const formatTimeValue = (hour: number, minute: number) =>
+  `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+
+const splitTimeValue = (value: string) => {
+  const parsed = parseTime(value);
+  if (!parsed) {
+    return { hour: "", minute: "" };
+  }
+  return {
+    hour: String(parsed.hour).padStart(2, "0"),
+    minute: String(parsed.minute).padStart(2, "0"),
+  };
+};
+
 const computeSleepDuration = (prevSleep: string, wake: string, baseDate: Date) => {
   const prev = parseTime(prevSleep);
   const wakeTime = parseTime(wake);
@@ -283,8 +302,18 @@ export default function AppPage() {
   const [hasDayDoc, setHasDayDoc] = useState(false);
   const [wakeTimeInput, setWakeTimeInput] = useState("");
   const [sleepTimeInput, setSleepTimeInput] = useState("");
-  const wakeTimeRef = useRef<HTMLInputElement | null>(null);
-  const sleepTimeRef = useRef<HTMLInputElement | null>(null);
+  const [wakeHourInput, setWakeHourInput] = useState("");
+  const [wakeMinuteInput, setWakeMinuteInput] = useState("");
+  const [sleepHourInput, setSleepHourInput] = useState("");
+  const [sleepMinuteInput, setSleepMinuteInput] = useState("");
+  const [timePickerOpen, setTimePickerOpen] = useState<"wake" | "sleep" | null>(
+    null
+  );
+  const [timePickerValue, setTimePickerValue] = useState<{
+    hour: number;
+    minute: number;
+  } | null>(null);
+  const timePickerRef = useRef<HTMLDivElement | null>(null);
   const [, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [monthData, setMonthData] = useState<Record<string, DayDoc>>({});
@@ -323,13 +352,25 @@ export default function AppPage() {
         const data = snapshot.data() as Partial<DayDoc>;
         const nextDoc = normalizeDayDoc(data);
         setDayDoc(nextDoc);
-        setWakeTimeInput(nextDoc.wakeTime ?? "");
-        setSleepTimeInput(nextDoc.sleepTime ?? "");
+        const wakeValue = nextDoc.wakeTime ?? "";
+        const sleepValue = nextDoc.sleepTime ?? "";
+        setWakeTimeInput(wakeValue);
+        setSleepTimeInput(sleepValue);
+        const wakeParts = splitTimeValue(wakeValue);
+        const sleepParts = splitTimeValue(sleepValue);
+        setWakeHourInput(wakeParts.hour);
+        setWakeMinuteInput(wakeParts.minute);
+        setSleepHourInput(sleepParts.hour);
+        setSleepMinuteInput(sleepParts.minute);
         setHasDayDoc(true);
       } else {
         setDayDoc(defaultDayDoc);
         setWakeTimeInput("");
         setSleepTimeInput("");
+        setWakeHourInput("");
+        setWakeMinuteInput("");
+        setSleepHourInput("");
+        setSleepMinuteInput("");
         setHasDayDoc(false);
       }
       setSaveError(null);
@@ -434,6 +475,22 @@ export default function AppPage() {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [colorPickerOpen]);
+
+  useEffect(() => {
+    if (!timePickerOpen) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!timePickerRef.current) {
+        return;
+      }
+      if (!timePickerRef.current.contains(event.target as Node)) {
+        setTimePickerOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [timePickerOpen]);
 
   const saveFields = async (fields: Partial<DayDoc>) => {
     if (!user) {
@@ -663,16 +720,115 @@ export default function AppPage() {
     setCurrentMonthDate(new Date(now.getFullYear(), now.getMonth(), 1));
   };
 
-  const openTimePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
-    if (!ref.current) {
+  const openTimePicker = (field: "wake" | "sleep") => {
+    const current = field === "wake" ? wakeTimeInput : sleepTimeInput;
+    const parsed = parseTime(current) ?? { hour: 7, minute: 0 };
+    setTimePickerValue({ hour: parsed.hour, minute: parsed.minute });
+    setTimePickerOpen(field);
+  };
+
+  const sanitizeDigits = (value: string) => value.replace(/\D/g, "").slice(0, 2);
+
+  const updateManualTime = (
+    field: "wake" | "sleep",
+    part: "hour" | "minute",
+    value: string
+  ) => {
+    const next = sanitizeDigits(value);
+    if (field === "wake") {
+      if (part === "hour") {
+        setWakeHourInput(next);
+      } else {
+        setWakeMinuteInput(next);
+      }
+      const hour = part === "hour" ? next : wakeHourInput;
+      const minute = part === "minute" ? next : wakeMinuteInput;
+      if (hour && minute) {
+        setWakeTimeInput(formatTimeValue(Number(hour), Number(minute)));
+      } else {
+        setWakeTimeInput("");
+      }
+    } else {
+      if (part === "hour") {
+        setSleepHourInput(next);
+      } else {
+        setSleepMinuteInput(next);
+      }
+      const hour = part === "hour" ? next : sleepHourInput;
+      const minute = part === "minute" ? next : sleepMinuteInput;
+      if (hour && minute) {
+        setSleepTimeInput(formatTimeValue(Number(hour), Number(minute)));
+      } else {
+        setSleepTimeInput("");
+      }
+    }
+  };
+
+  const commitManualTime = (field: "wake" | "sleep") => {
+    if (field === "wake") {
+      if (!wakeHourInput || !wakeMinuteInput) {
+        setWakeTimeInput("");
+        if (dayDoc.wakeTime !== null) {
+          setDayDoc((prev) => ({ ...prev, wakeTime: null }));
+          saveFields({ wakeTime: null });
+        }
+        return;
+      }
+      const normalized = normalizeTimeToStep(
+        formatTimeValue(Number(wakeHourInput), Number(wakeMinuteInput))
+      );
+      const parts = splitTimeValue(normalized);
+      setWakeHourInput(parts.hour);
+      setWakeMinuteInput(parts.minute);
+      setWakeTimeInput(normalized);
+      if (normalized !== dayDoc.wakeTime) {
+        setDayDoc((prev) => ({ ...prev, wakeTime: normalized }));
+        saveFields({ wakeTime: normalized });
+      }
       return;
     }
-    const input = ref.current as HTMLInputElement & { showPicker?: () => void };
-    if (typeof input.showPicker === "function") {
-      input.showPicker();
+
+    if (!sleepHourInput || !sleepMinuteInput) {
+      setSleepTimeInput("");
+      if (dayDoc.sleepTime !== null) {
+        setDayDoc((prev) => ({ ...prev, sleepTime: null }));
+        saveFields({ sleepTime: null });
+      }
+      return;
+    }
+    const normalized = normalizeTimeToStep(
+      formatTimeValue(Number(sleepHourInput), Number(sleepMinuteInput))
+    );
+    const parts = splitTimeValue(normalized);
+    setSleepHourInput(parts.hour);
+    setSleepMinuteInput(parts.minute);
+    setSleepTimeInput(normalized);
+    if (normalized !== dayDoc.sleepTime) {
+      setDayDoc((prev) => ({ ...prev, sleepTime: normalized }));
+      saveFields({ sleepTime: normalized });
+    }
+  };
+
+  const commitTimePicker = (field: "wake" | "sleep", hour: number, minute: number) => {
+    const normalized = formatTimeValue(hour, minute);
+    if (field === "wake") {
+      setWakeTimeInput(normalized);
+      const parts = splitTimeValue(normalized);
+      setWakeHourInput(parts.hour);
+      setWakeMinuteInput(parts.minute);
+      if (normalized !== dayDoc.wakeTime) {
+        setDayDoc((prev) => ({ ...prev, wakeTime: normalized }));
+        saveFields({ wakeTime: normalized });
+      }
     } else {
-      input.focus();
-      input.click();
+      setSleepTimeInput(normalized);
+      const parts = splitTimeValue(normalized);
+      setSleepHourInput(parts.hour);
+      setSleepMinuteInput(parts.minute);
+      if (normalized !== dayDoc.sleepTime) {
+        setDayDoc((prev) => ({ ...prev, sleepTime: normalized }));
+        saveFields({ sleepTime: normalized });
+      }
     }
   };
 
@@ -904,17 +1060,17 @@ export default function AppPage() {
 
         <section className="w-full lg:w-96">
           <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="mb-4">
+            <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">{displayDate}</h2>
+              {!hasDayDoc ? (
+                <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
+                  未入力
+                </span>
+              ) : null}
             </div>
             {saveError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
                 {saveError}
-              </div>
-            ) : null}
-            {!hasDayDoc && !saveError ? (
-              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-                この日の入力はまだありません。
               </div>
             ) : null}
 
@@ -926,27 +1082,35 @@ export default function AppPage() {
                 </div>
                 <label className="flex items-center justify-between gap-3">
                   起床時刻
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={wakeTimeRef}
-                      type="time"
-                      value={wakeTimeInput}
-                      onChange={(event) => setWakeTimeInput(event.target.value)}
-                      onBlur={() => {
-                        const normalized = normalizeTimeToStep(wakeTimeInput);
-                        setWakeTimeInput(normalized);
-                        const nextValue = normalized === "" ? null : normalized;
-                        if (nextValue !== dayDoc.wakeTime) {
-                          setDayDoc((prev) => ({ ...prev, wakeTime: nextValue }));
-                          saveFields({ wakeTime: nextValue });
+                  <div className="relative flex items-center gap-2">
+                    <div className="flex h-10 items-center gap-1 rounded border border-zinc-200 px-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="hh"
+                        value={wakeHourInput}
+                        onChange={(event) =>
+                          updateManualTime("wake", "hour", event.target.value)
                         }
-                      }}
-                      step={300}
-                      className="h-10 w-32 rounded border border-zinc-200 px-3 text-sm"
-                    />
+                        onBlur={() => commitManualTime("wake")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                      <span className="text-xs text-zinc-400">:</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="mm"
+                        value={wakeMinuteInput}
+                        onChange={(event) =>
+                          updateManualTime("wake", "minute", event.target.value)
+                        }
+                        onBlur={() => commitManualTime("wake")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                    </div>
                     <button
                       type="button"
-                      onClick={() => openTimePicker(wakeTimeRef)}
+                      onClick={() => openTimePicker("wake")}
                       className="inline-flex h-10 w-10 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
                       aria-label="起床時刻のピッカーを開く"
                     >
@@ -962,9 +1126,68 @@ export default function AppPage() {
                         <path d="M12 7v5l3 2" />
                       </svg>
                     </button>
+                    {timePickerOpen === "wake" && timePickerValue ? (
+                      <div
+                        ref={timePickerRef}
+                        className="absolute right-0 z-20 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg"
+                      >
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              時
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.hours.map((hour) => (
+                                <button
+                                  key={hour}
+                                  type="button"
+                                  onClick={() => {
+                                    const minute = timePickerValue.minute;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("wake", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.hour === hour
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(hour).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              分
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.minutes.map((minute) => (
+                                <button
+                                  key={minute}
+                                  type="button"
+                                  onClick={() => {
+                                    const hour = timePickerValue.hour;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("wake", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.minute === minute
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(minute).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </label>
-                <label className="flex items-center gap-2">
+                <label className="flex w-fit items-center gap-2">
                   <input
                     type="checkbox"
                     checked={dayDoc.breakfast}
@@ -977,7 +1200,7 @@ export default function AppPage() {
                   />
                   朝食 ☕
                 </label>
-                <label className="flex items-center gap-2">
+                <label className="flex w-fit items-center gap-2">
                   <input
                     type="checkbox"
                     checked={dayDoc.brushAM}
@@ -990,7 +1213,7 @@ export default function AppPage() {
                   />
                   歯磨き 🦷
                 </label>
-                <label className="flex items-center gap-2">
+                <label className="flex w-fit items-center gap-2">
                   <input
                     type="checkbox"
                     checked={dayDoc.showerAM}
@@ -1061,7 +1284,7 @@ export default function AppPage() {
                     </button>
                   ))}
                 </div>
-                <label className="flex items-center gap-2">
+                <label className="flex w-fit items-center gap-2">
                   <input
                     type="checkbox"
                     checked={dayDoc.brushPM}
@@ -1074,7 +1297,7 @@ export default function AppPage() {
                   />
                   歯磨き 🦷
                 </label>
-                <label className="flex items-center gap-2">
+                <label className="flex w-fit items-center gap-2">
                   <input
                     type="checkbox"
                     checked={dayDoc.showerPM}
@@ -1089,27 +1312,35 @@ export default function AppPage() {
                 </label>
                 <label className="flex items-center justify-between gap-3">
                   就寝時刻
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={sleepTimeRef}
-                      type="time"
-                      value={sleepTimeInput}
-                      onChange={(event) => setSleepTimeInput(event.target.value)}
-                      onBlur={() => {
-                        const normalized = normalizeTimeToStep(sleepTimeInput);
-                        setSleepTimeInput(normalized);
-                        const nextValue = normalized === "" ? null : normalized;
-                        if (nextValue !== dayDoc.sleepTime) {
-                          setDayDoc((prev) => ({ ...prev, sleepTime: nextValue }));
-                          saveFields({ sleepTime: nextValue });
+                  <div className="relative flex items-center gap-2">
+                    <div className="flex h-10 items-center gap-1 rounded border border-zinc-200 px-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="hh"
+                        value={sleepHourInput}
+                        onChange={(event) =>
+                          updateManualTime("sleep", "hour", event.target.value)
                         }
-                      }}
-                      step={300}
-                      className="h-10 w-32 rounded border border-zinc-200 px-3 text-sm"
-                    />
+                        onBlur={() => commitManualTime("sleep")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                      <span className="text-xs text-zinc-400">:</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="mm"
+                        value={sleepMinuteInput}
+                        onChange={(event) =>
+                          updateManualTime("sleep", "minute", event.target.value)
+                        }
+                        onBlur={() => commitManualTime("sleep")}
+                        className="w-7 bg-transparent text-center text-sm focus:outline-none"
+                      />
+                    </div>
                     <button
                       type="button"
-                      onClick={() => openTimePicker(sleepTimeRef)}
+                      onClick={() => openTimePicker("sleep")}
                       className="inline-flex h-10 w-10 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
                       aria-label="就寝時刻のピッカーを開く"
                     >
@@ -1125,6 +1356,65 @@ export default function AppPage() {
                         <path d="M12 7v5l3 2" />
                       </svg>
                     </button>
+                    {timePickerOpen === "sleep" && timePickerValue ? (
+                      <div
+                        ref={timePickerRef}
+                        className="absolute right-0 z-20 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg"
+                      >
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              時
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.hours.map((hour) => (
+                                <button
+                                  key={hour}
+                                  type="button"
+                                  onClick={() => {
+                                    const minute = timePickerValue.minute;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("sleep", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.hour === hour
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(hour).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <div className="mb-1 text-[11px] font-semibold text-zinc-500">
+                              分
+                            </div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                              {timeOptions.minutes.map((minute) => (
+                                <button
+                                  key={minute}
+                                  type="button"
+                                  onClick={() => {
+                                    const hour = timePickerValue.hour;
+                                    setTimePickerValue({ hour, minute });
+                                    commitTimePicker("sleep", hour, minute);
+                                  }}
+                                  className={`w-full rounded px-2 py-1 text-left text-sm ${
+                                    timePickerValue.minute === minute
+                                      ? "bg-zinc-900 text-white"
+                                      : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {String(minute).padStart(2, "0")}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </label>
               </div>
@@ -1134,7 +1424,7 @@ export default function AppPage() {
                   <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
                   <h3 className="text-xs font-semibold text-zinc-700">その他</h3>
                 </div>
-                <label className="flex items-center gap-2">
+                <label className="flex w-fit items-center gap-2">
                   <input
                     type="checkbox"
                     checked={dayDoc.workout}
