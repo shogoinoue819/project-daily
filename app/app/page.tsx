@@ -6,12 +6,15 @@ import { signOut } from "firebase/auth";
 import {
   Timestamp,
   collection,
+  deleteField,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
+  writeBatch,
   where,
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase/client";
@@ -19,8 +22,8 @@ import { useAuth } from "@/lib/hooks/useAuth";
 
 const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
 
-type MealOption = "home" | "lab" | "out" | "other";
-type LegacyMealOption = MealOption | "none";
+type MealOption = "home" | "lab" | "out";
+type LegacyMealOption = MealOption | "none" | "other";
 
 type DayDoc = {
   date?: Timestamp;
@@ -33,10 +36,20 @@ type DayDoc = {
   dinner: MealOption | null;
   brushPM: boolean;
   showerPM: boolean;
-  workout: boolean;
+  custom?: Record<string, CustomValue>;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
+
+type CustomInputType = "check" | "text" | "select";
+type CustomItem = {
+  id: string;
+  name: string;
+  inputType: CustomInputType;
+  displayLabel?: string;
+  options?: string[];
+};
+type CustomValue = boolean | string | null;
 
 const defaultDayDoc: DayDoc = {
   wakeTime: null,
@@ -48,17 +61,16 @@ const defaultDayDoc: DayDoc = {
   dinner: null,
   brushPM: false,
   showerPM: false,
-  workout: false,
+  custom: {},
 };
 
 const mealOptions: { value: MealOption; label: string }[] = [
   { value: "home", label: "自炊(家)" },
   { value: "lab", label: "自炊(研)" },
   { value: "out", label: "外食" },
-  { value: "other", label: "その他" },
 ];
 
-const filterGroups = [
+const baseFilterGroups = [
   {
     id: "sleep",
     label: "睡眠",
@@ -87,15 +99,15 @@ const filterGroups = [
       { id: "showerPM", label: "シャワー(夜)" },
     ],
   },
-  {
-    id: "other",
-    label: "その他",
-    items: [{ id: "workout", label: "筋トレ" }],
-  },
-] as const;
+];
 
-type FilterGroup = (typeof filterGroups)[number];
-type FilterItemId = FilterGroup["items"][number]["id"];
+type FilterItemId = string;
+type FilterGroup = {
+  id: string;
+  label: string;
+  items: { id: FilterItemId; label: string; customId?: string }[];
+  isCustom?: boolean;
+};
 const colorPalette = [
   { id: "blue", label: "Blue", chip: "bg-sky-50 text-sky-700", dot: "bg-sky-500" },
   {
@@ -162,7 +174,7 @@ const colorStyles = Object.fromEntries(
   colorPalette.map((color) => [color.id, color])
 ) as Record<ColorId, (typeof colorPalette)[number]>;
 
-const defaultItemColors: Record<FilterItemId, ColorId> = {
+const defaultItemColors: Record<string, ColorId> = {
   wakeTime: "blue",
   sleepTime: "blue",
   sleepDuration: "blue",
@@ -173,11 +185,13 @@ const defaultItemColors: Record<FilterItemId, ColorId> = {
   brushPM: "teal",
   showerAM: "indigo",
   showerPM: "indigo",
-  workout: "purple",
 };
 
+const baseFilterItemIds = baseFilterGroups.flatMap((group) =>
+  group.items.map((item) => item.id)
+);
 const initialFilters = Object.fromEntries(
-  filterGroups.flatMap((group) => group.items.map((item) => [item.id, true]))
+  baseFilterItemIds.map((id) => [id, true])
 ) as Record<FilterItemId, boolean>;
 
 const formatDateId = (date: Date) =>
@@ -266,7 +280,7 @@ const computeSleepDuration = (prevSleep: string, wake: string, baseDate: Date) =
 };
 
 const normalizeMealValue = (value?: LegacyMealOption | null) => {
-  if (!value || value === "none") {
+  if (!value || value === "none" || value === "other") {
     return null;
   }
   return value;
@@ -288,8 +302,14 @@ const normalizeDayDoc = (
     ...data,
     lunch: normalizeMealValue(data.lunch),
     dinner: normalizeMealValue(data.dinner),
+    custom: data.custom ?? {},
   };
 };
+
+const buildDefaultItemColors = (items: CustomItem[]): Record<string, ColorId> => ({
+  ...defaultItemColors,
+  ...Object.fromEntries(items.map((item) => [`custom-${item.id}`, "cyan" as ColorId])),
+});
 
 export default function AppPage() {
   const router = useRouter();
@@ -323,13 +343,52 @@ export default function AppPage() {
   const [isMobile, setIsMobile] = useState(false);
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
-  const [itemColors, setItemColors] = useState<Record<FilterItemId, ColorId>>(
+  const [customItems, setCustomItems] = useState<CustomItem[]>([]);
+  const [itemColors, setItemColors] = useState<Record<string, ColorId>>(
     defaultItemColors
   );
-  const [colorPickerOpen, setColorPickerOpen] = useState<FilterItemId | null>(
-    null
-  );
+  const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null);
+  const [customModalOpen, setCustomModalOpen] = useState(false);
+  const [customModalMode, setCustomModalMode] = useState<"create" | "edit">("create");
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
+  const [customForm, setCustomForm] = useState<{
+    name: string;
+    inputType: CustomInputType;
+    displayLabel: string;
+    optionsText: string;
+  }>({
+    name: "",
+    inputType: "check",
+    displayLabel: "",
+    optionsText: "",
+  });
+  const [customFormError, setCustomFormError] = useState<string | null>(null);
   const colorPickerRef = useRef<HTMLDivElement | null>(null);
+
+  const customFilterItems = useMemo(
+    () =>
+      customItems.map((item) => ({
+        id: `custom-${item.id}`,
+        label: item.name,
+        customId: item.id,
+      })),
+    [customItems]
+  );
+  const filterGroups = useMemo<FilterGroup[]>(
+    () => [
+      ...baseFilterGroups,
+      {
+        id: "custom",
+        label: "カスタム",
+        items: customFilterItems,
+        isCustom: true,
+      },
+    ],
+    [customFilterItems]
+  );
+  const filterItemIdSet = useMemo(() => {
+    return new Set([...baseFilterItemIds, ...customFilterItems.map((item) => item.id)]);
+  }, [customFilterItems]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -428,6 +487,30 @@ export default function AppPage() {
   }, [currentMonthDate, user]);
 
   useEffect(() => {
+    if (!user) {
+      return;
+    }
+    const ref = doc(db, "users", user.uid, "settings", "customItems");
+    const unsubscribe = onSnapshot(ref, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data() as { items?: CustomItem[] };
+        setCustomItems(
+          (data.items ?? []).map((item) => ({
+            ...item,
+            inputType: item.inputType ?? "check",
+            displayLabel: item.displayLabel ?? "",
+            options: item.options ?? [],
+          }))
+        );
+      } else {
+        setCustomItems([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
     const media = window.matchMedia("(max-width: 640px)");
     const update = () => setIsMobile(media.matches);
     update();
@@ -463,21 +546,42 @@ export default function AppPage() {
     }
     const settingsRef = doc(db, "users", user.uid, "settings", "ui");
     const unsubscribe = onSnapshot(settingsRef, (snapshot) => {
+      const defaults = buildDefaultItemColors(customItems);
       if (snapshot.exists()) {
         const data = snapshot.data() as {
-          itemColors?: Partial<Record<FilterItemId, ColorId>>;
+          itemColors?: Partial<Record<string, ColorId>>;
         };
+        const normalizedItemColors = Object.fromEntries(
+          Object.entries(data.itemColors ?? {}).filter(([, value]) => Boolean(value))
+        ) as Record<string, ColorId>;
         setItemColors({
-          ...defaultItemColors,
-          ...data.itemColors,
+          ...defaults,
+          ...normalizedItemColors,
         });
       } else {
-        setItemColors(defaultItemColors);
+        setItemColors(defaults);
       }
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [customItems, user]);
+
+  useEffect(() => {
+    setFilters((prev) => {
+      const next = { ...prev };
+      customFilterItems.forEach((item) => {
+        if (!(item.id in next)) {
+          next[item.id] = true;
+        }
+      });
+      Object.keys(next).forEach((key) => {
+        if (!filterItemIdSet.has(key)) {
+          delete next[key];
+        }
+      });
+      return next;
+    });
+  }, [customFilterItems, filterItemIdSet]);
 
   useEffect(() => {
     if (!colorPickerOpen) {
@@ -562,13 +666,11 @@ export default function AppPage() {
     home: "自炊(家)",
     lab: "自炊(研)",
     out: "外食",
-    other: "その他",
   };
   const mealShortLabel: Record<MealOption, string> = {
     home: "家",
     lab: "研",
     out: "外",
-    other: "他",
   };
 
   const buildChips = (date: Date) => {
@@ -589,7 +691,6 @@ export default function AppPage() {
     const brushPmColor = colorStyles[itemColors.brushPM].chip;
     const showerAmColor = colorStyles[itemColors.showerAM].chip;
     const showerPmColor = colorStyles[itemColors.showerPM].chip;
-    const workoutColor = colorStyles[itemColors.workout].chip;
     const mealLabel = (value: MealOption) =>
       isMobile ? mealShortLabel[value] : mealFullLabel[value];
 
@@ -671,13 +772,28 @@ export default function AppPage() {
         className: showerPmColor,
       });
     }
-    if (filters.workout && docData.workout) {
+    const customValues = docData.custom ?? {};
+    customItems.forEach((item) => {
+      const filterId = `custom-${item.id}`;
+      if (!filters[filterId]) {
+        return;
+      }
+      const value = customValues[item.id];
+      const hasValue =
+        item.inputType === "check" ? Boolean(value) : typeof value === "string" && value;
+      if (!hasValue) {
+        return;
+      }
+      const label = item.displayLabel?.trim() || item.name;
+      const chipLabel =
+        item.inputType === "check" ? label : `${label}: ${String(value)}`;
+      const colorId = itemColors[filterId] ?? "cyan";
       chips.push({
-        id: `${dateId}-workout`,
-        label: "💪",
-        className: workoutColor,
+        id: `${dateId}-${filterId}`,
+        label: chipLabel,
+        className: colorStyles[colorId].chip,
       });
-    }
+    });
     return chips;
   };
 
@@ -707,6 +823,179 @@ export default function AppPage() {
       }
       return next;
     });
+  };
+
+  const openCreateCustomModal = () => {
+    setCustomModalMode("create");
+    setEditingCustomId(null);
+    setCustomForm({
+      name: "",
+      inputType: "check",
+      displayLabel: "",
+      optionsText: "",
+    });
+    setCustomFormError(null);
+    setCustomModalOpen(true);
+  };
+
+  const openEditCustomModal = (item: CustomItem) => {
+    setCustomModalMode("edit");
+    setEditingCustomId(item.id);
+    setCustomForm({
+      name: item.name,
+      inputType: item.inputType,
+      displayLabel: item.displayLabel ?? "",
+      optionsText: (item.options ?? []).join("\n"),
+    });
+    setCustomFormError(null);
+    setCustomModalOpen(true);
+  };
+
+  const closeCustomModal = () => {
+    setCustomModalOpen(false);
+    setCustomFormError(null);
+  };
+
+  const parseOptions = (value: string) =>
+    value
+      .split("\n")
+      .map((option) => option.trim())
+      .filter(Boolean);
+
+  const persistCustomItems = async (items: CustomItem[]) => {
+    if (!user) {
+      return;
+    }
+    const ref = doc(db, "users", user.uid, "settings", "customItems");
+    try {
+      await setDoc(ref, { items }, { merge: true });
+    } catch (error) {
+      setSaveError("カスタム項目の保存に失敗しました。");
+      console.error(error);
+    }
+  };
+
+  const clearCustomValueFromDay = (itemId: string) => {
+    const nextCustom = { ...(dayDoc.custom ?? {}) };
+    if (itemId in nextCustom) {
+      delete nextCustom[itemId];
+      setDayDoc((prev) => ({ ...prev, custom: nextCustom }));
+      saveFields({ custom: nextCustom });
+    }
+  };
+
+  const removeCustomItemData = async (itemId: string) => {
+    if (!user) {
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const snapshot = await getDocs(collection(db, "users", user.uid, "days"));
+      const batch = writeBatch(db);
+      let hasUpdates = false;
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as DayDoc;
+        if (data.custom && itemId in data.custom) {
+          batch.update(docSnap.ref, { [`custom.${itemId}`]: deleteField() });
+          hasUpdates = true;
+        }
+      });
+      if (hasUpdates) {
+        await batch.commit();
+      }
+    } catch (error) {
+      setSaveError("カスタム項目の削除に失敗しました。");
+      console.error(error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCustomItem = async (item: CustomItem) => {
+    const confirmed = window.confirm(
+      "このカスタム項目を削除します。すでに入力したデータも削除されますがよろしいですか？"
+    );
+    if (!confirmed) {
+      return;
+    }
+    await removeCustomItemData(item.id);
+    const nextItems = customItems.filter((custom) => custom.id !== item.id);
+    await persistCustomItems(nextItems);
+    clearCustomValueFromDay(item.id);
+    closeCustomModal();
+  };
+
+  const handleSaveCustomItem = async () => {
+    const name = customForm.name.trim();
+    if (!name) {
+      setCustomFormError("項目名を入力してください。");
+      return;
+    }
+    const displayLabel = customForm.displayLabel.trim();
+    const options =
+      customForm.inputType === "select" ? parseOptions(customForm.optionsText) : [];
+    if (customForm.inputType === "select" && options.length === 0) {
+      setCustomFormError("選択項目を1つ以上入力してください。");
+      return;
+    }
+
+    if (customModalMode === "create") {
+      const newItem: CustomItem = {
+        id: crypto.randomUUID(),
+        name,
+        inputType: customForm.inputType,
+        displayLabel,
+        options,
+      };
+      await persistCustomItems([...customItems, newItem]);
+      closeCustomModal();
+      return;
+    }
+
+    const target = customItems.find((item) => item.id === editingCustomId);
+    if (!target) {
+      closeCustomModal();
+      return;
+    }
+    const inputTypeChanged = target.inputType !== customForm.inputType;
+    const optionsChanged =
+      customForm.inputType === "select" &&
+      JSON.stringify(target.options ?? []) !== JSON.stringify(options);
+    if (inputTypeChanged || optionsChanged) {
+      const confirmed = window.confirm(
+        "入力形式の変更により既存の入力データが消える可能性があります。続行しますか？"
+      );
+      if (!confirmed) {
+        return;
+      }
+      await removeCustomItemData(target.id);
+      clearCustomValueFromDay(target.id);
+    }
+    const nextItems = customItems.map((item) =>
+      item.id === target.id
+        ? {
+            ...item,
+            name,
+            inputType: customForm.inputType,
+            displayLabel,
+            options,
+          }
+        : item
+    );
+    await persistCustomItems(nextItems);
+    closeCustomModal();
+  };
+
+  const updateCustomValue = (itemId: string, value: CustomValue) => {
+    const nextCustom = { ...(dayDoc.custom ?? {}) };
+    if (value === null || value === "" || value === false) {
+      delete nextCustom[itemId];
+    } else {
+      nextCustom[itemId] = value;
+    }
+    setDayDoc((prev) => ({ ...prev, custom: nextCustom }));
+    saveFields({ custom: nextCustom });
   };
 
   const ParentCheckbox = ({
@@ -866,6 +1155,91 @@ export default function AppPage() {
 
   const selectedDateId = formatDateId(selectedDate);
   const displayDate = `${selectedDate.getFullYear()}/${selectedDate.getMonth() + 1}/${selectedDate.getDate()}`;
+  const customValues = dayDoc.custom ?? {};
+  const editingCustomItem = editingCustomId
+    ? customItems.find((item) => item.id === editingCustomId) ?? null
+    : null;
+
+  const renderCustomInputs = () => (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+        <h3 className="text-xs font-semibold text-zinc-700">カスタム</h3>
+      </div>
+      {customItems.length === 0 ? (
+        <div className="text-xs text-zinc-400">まだカスタム項目がありません。</div>
+      ) : null}
+      {customItems.map((item) => {
+        const label = item.name;
+        const value = customValues[item.id];
+        if (item.inputType === "check") {
+          return (
+            <label key={item.id} className="flex w-fit items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(value)}
+                onChange={() => updateCustomValue(item.id, !Boolean(value))}
+                className="h-4 w-4 rounded border-zinc-300"
+              />
+              {label}
+            </label>
+          );
+        }
+        if (item.inputType === "select") {
+          const options = item.options ?? [];
+          const optionCount = options.length;
+          const gridColsClass =
+            optionCount <= 1
+              ? "grid-cols-1"
+              : optionCount === 2
+                ? "grid-cols-2"
+                : optionCount === 3
+                  ? "grid-cols-3"
+                  : optionCount === 4
+                    ? "grid-cols-4"
+                    : optionCount <= 6
+                      ? "grid-cols-3"
+                      : "grid-cols-4";
+          return (
+            <div key={item.id} className="space-y-1">
+              <div className="text-xs font-semibold text-zinc-500">{label}</div>
+              <div className={`grid ${gridColsClass} gap-2 text-xs`}>
+                {options.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => {
+                      const nextValue = value === option ? "" : option;
+                      updateCustomValue(item.id, nextValue);
+                    }}
+                    className={`rounded-lg border px-3 py-2 ${
+                      value === option
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
+                    }`}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={item.id} className="space-y-1">
+            <div className="text-xs font-semibold text-zinc-500">{label}</div>
+            <input
+              type="text"
+              value={typeof value === "string" ? value : ""}
+              onChange={(event) => updateCustomValue(item.id, event.target.value)}
+              className="w-full rounded border border-zinc-200 px-3 py-2 text-sm text-zinc-700"
+              placeholder="入力"
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -956,70 +1330,123 @@ export default function AppPage() {
                 const checkedCount = group.items.filter(
                   (item) => filters[item.id]
                 ).length;
-                const allChecked = checkedCount === group.items.length;
+                const allChecked =
+                  group.items.length > 0 && checkedCount === group.items.length;
                 const indeterminate = checkedCount > 0 && !allChecked;
                 return (
                   <div key={group.id} className="space-y-2">
-                    <label className="flex items-center gap-2 font-medium">
-                      <ParentCheckbox
-                        checked={allChecked}
-                        indeterminate={indeterminate}
-                        onChange={(checked) => toggleGroup(group, checked)}
-                      />
-                      {group.label}
-                    </label>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 font-medium">
+                        <ParentCheckbox
+                          checked={allChecked}
+                          indeterminate={indeterminate}
+                          onChange={(checked) => toggleGroup(group, checked)}
+                        />
+                        {group.label}
+                      </label>
+                      {group.isCustom ? (
+                        <button
+                          type="button"
+                          onClick={openCreateCustomModal}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                          aria-label="カスタム項目を追加"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="space-y-1 pl-6 text-xs text-zinc-500">
-                      {group.items.map((item) => (
-                        <div key={item.id} className="flex items-center justify-between">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={filters[item.id]}
-                              onChange={(event) =>
-                                updateFilter(item.id, event.target.checked)
-                              }
-                              className="h-3.5 w-3.5 rounded border-zinc-300"
-                            />
-                            {item.label}
-                          </label>
-                          <div className="relative">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setColorPickerOpen(
-                                  colorPickerOpen === item.id ? null : item.id
-                                )
-                              }
-                              className={`h-3.5 w-3.5 rounded-full border border-white shadow ${colorStyles[itemColors[item.id]].dot}`}
-                              aria-label={`${item.label}の色を選択`}
-                            />
-                            {colorPickerOpen === item.id ? (
-                              <div
-                                ref={colorPickerRef}
-                                className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
-                              >
-                                <div className="grid grid-cols-4 gap-2">
-                                  {colorPalette.map((color) => (
-                                    <button
-                                      key={color.id}
-                                      type="button"
-                                      onClick={() =>
-                                        updateItemColor(item.id, color.id as ColorId)
-                                      }
-                                      className={`h-6 w-6 rounded-full border ${
-                                        color.id === itemColors[item.id]
-                                          ? "border-zinc-900"
-                                          : "border-transparent"
-                                      } ${color.dot}`}
-                                      aria-label={`${color.label}を選択`}
-                                    />
-                                  ))}
-                                </div>
+                      {group.items.map((item) => {
+                        const customItem = item.customId
+                          ? customItems.find((custom) => custom.id === item.customId)
+                          : null;
+                        return (
+                          <div key={item.id} className="flex items-center justify-between">
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={filters[item.id] ?? false}
+                                onChange={(event) =>
+                                  updateFilter(item.id, event.target.checked)
+                                }
+                                className="h-3.5 w-3.5 rounded border-zinc-300"
+                              />
+                              {item.label}
+                            </label>
+                            <div className="flex items-center gap-2">
+                              {customItem ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditCustomModal(customItem)}
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                                    aria-label={`${customItem.name}を編集`}
+                                  >
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                    >
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                                    </svg>
+                                  </button>
+                                </>
+                              ) : null}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setColorPickerOpen(
+                                      colorPickerOpen === item.id ? null : item.id
+                                    )
+                                  }
+                                  className={`h-3.5 w-3.5 rounded-full border border-white shadow ${
+                                    colorStyles[itemColors[item.id] ?? "cyan"].dot
+                                  }`}
+                                  aria-label={`${item.label}の色を選択`}
+                                />
+                                {colorPickerOpen === item.id ? (
+                                  <div
+                                    ref={colorPickerRef}
+                                    className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
+                                  >
+                                    <div className="grid grid-cols-4 gap-2">
+                                      {colorPalette.map((color) => (
+                                        <button
+                                          key={color.id}
+                                          type="button"
+                                          onClick={() =>
+                                            updateItemColor(item.id, color.id as ColorId)
+                                          }
+                                          className={`h-6 w-6 rounded-full border ${
+                                            color.id === itemColors[item.id]
+                                              ? "border-zinc-900"
+                                              : "border-transparent"
+                                          } ${color.dot}`}
+                                          aria-label={`${color.label}を選択`}
+                                        />
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
-                            ) : null}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -1279,7 +1706,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">昼</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">昼食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1308,7 +1735,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">夜</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">夕食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1464,29 +1891,141 @@ export default function AppPage() {
                 </label>
               </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
-                  <h3 className="text-xs font-semibold text-zinc-700">その他</h3>
-                </div>
-                <label className="flex w-fit items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={dayDoc.workout}
-                    onChange={() => {
-                      const nextValue = !dayDoc.workout;
-                      setDayDoc((prev) => ({ ...prev, workout: nextValue }));
-                      saveFields({ workout: nextValue });
-                    }}
-                    className="h-4 w-4 rounded border-zinc-300"
-                  />
-                  筋トレ 💪
-                </label>
-              </div>
+              {renderCustomInputs()}
             </div>
           </div>
         </section>
       </main>
+      {customModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900">
+                  {customModalMode === "create"
+                    ? "カスタム項目を追加"
+                    : "カスタム項目を編集"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeCustomModal}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-200 text-zinc-500"
+                aria-label="モーダルを閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-4 space-y-4 text-sm text-zinc-700">
+              <div className="space-y-1">
+                <div className="text-xs font-semibold text-zinc-500">項目名</div>
+                <input
+                  type="text"
+                  value={customForm.name}
+                  onChange={(event) =>
+                    setCustomForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  className="w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                  placeholder="例: 読書 📚"
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-zinc-500">入力形式</div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {[
+                    { value: "check", label: "チェック" },
+                    { value: "text", label: "テキスト" },
+                    { value: "select", label: "選択" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setCustomForm((prev) => ({
+                          ...prev,
+                          inputType: option.value as CustomInputType,
+                        }))
+                      }
+                      className={`rounded-lg border px-3 py-2 font-semibold ${
+                        customForm.inputType === option.value
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {customForm.inputType === "select" ? (
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold text-zinc-500">選択項目</div>
+                  <textarea
+                    value={customForm.optionsText}
+                    onChange={(event) =>
+                      setCustomForm((prev) => ({
+                        ...prev,
+                        optionsText: event.target.value,
+                      }))
+                    }
+                    className="min-h-[96px] w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                    placeholder="1行に1つずつ入力"
+                  />
+                </div>
+              ) : null}
+              <div className="space-y-1">
+                <div className="text-xs font-semibold text-zinc-500">カレンダー表示</div>
+                <input
+                  type="text"
+                  value={customForm.displayLabel}
+                  onChange={(event) =>
+                    setCustomForm((prev) => ({
+                      ...prev,
+                      displayLabel: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                  placeholder="空欄なら項目名を使用"
+                />
+              </div>
+              {customFormError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                  {customFormError}
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-5 flex items-center justify-between gap-2">
+              {customModalMode === "edit" && editingCustomItem ? (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCustomItem(editingCustomItem)}
+                  className="rounded-full border border-red-200 px-4 py-2 text-xs font-semibold text-red-500 hover:bg-red-50"
+                >
+                  削除する
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={closeCustomModal}
+                  className="rounded-full border border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveCustomItem}
+                  className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
+                >
+                  保存する
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isMobile ? (
         <>
           <div
@@ -1521,70 +2060,123 @@ export default function AppPage() {
                 const checkedCount = group.items.filter(
                   (item) => filters[item.id]
                 ).length;
-                const allChecked = checkedCount === group.items.length;
+                const allChecked =
+                  group.items.length > 0 && checkedCount === group.items.length;
                 const indeterminate = checkedCount > 0 && !allChecked;
                 return (
                   <div key={group.id} className="space-y-2">
-                    <label className="flex items-center gap-2 font-medium">
-                      <ParentCheckbox
-                        checked={allChecked}
-                        indeterminate={indeterminate}
-                        onChange={(checked) => toggleGroup(group, checked)}
-                      />
-                      {group.label}
-                    </label>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 font-medium">
+                        <ParentCheckbox
+                          checked={allChecked}
+                          indeterminate={indeterminate}
+                          onChange={(checked) => toggleGroup(group, checked)}
+                        />
+                        {group.label}
+                      </label>
+                      {group.isCustom ? (
+                        <button
+                          type="button"
+                          onClick={openCreateCustomModal}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                          aria-label="カスタム項目を追加"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="space-y-1 pl-6 text-xs text-zinc-500">
-                      {group.items.map((item) => (
-                        <div key={item.id} className="flex items-center justify-between">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={filters[item.id]}
-                              onChange={(event) =>
-                                updateFilter(item.id, event.target.checked)
-                              }
-                              className="h-3.5 w-3.5 rounded border-zinc-300"
-                            />
-                            {item.label}
-                          </label>
-                          <div className="relative">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setColorPickerOpen(
-                                  colorPickerOpen === item.id ? null : item.id
-                                )
-                              }
-                              className={`h-3.5 w-3.5 rounded-full border border-white shadow ${colorStyles[itemColors[item.id]].dot}`}
-                              aria-label={`${item.label}の色を選択`}
-                            />
-                            {colorPickerOpen === item.id ? (
-                              <div
-                                ref={colorPickerRef}
-                                className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
-                              >
-                                <div className="grid grid-cols-4 gap-2">
-                                  {colorPalette.map((color) => (
-                                    <button
-                                      key={color.id}
-                                      type="button"
-                                      onClick={() =>
-                                        updateItemColor(item.id, color.id as ColorId)
-                                      }
-                                      className={`h-6 w-6 rounded-full border ${
-                                        color.id === itemColors[item.id]
-                                          ? "border-zinc-900"
-                                          : "border-transparent"
-                                      } ${color.dot}`}
-                                      aria-label={`${color.label}を選択`}
-                                    />
-                                  ))}
-                                </div>
+                      {group.items.map((item) => {
+                        const customItem = item.customId
+                          ? customItems.find((custom) => custom.id === item.customId)
+                          : null;
+                        return (
+                          <div key={item.id} className="flex items-center justify-between">
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={filters[item.id] ?? false}
+                                onChange={(event) =>
+                                  updateFilter(item.id, event.target.checked)
+                                }
+                                className="h-3.5 w-3.5 rounded border-zinc-300"
+                              />
+                              {item.label}
+                            </label>
+                            <div className="flex items-center gap-2">
+                              {customItem ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditCustomModal(customItem)}
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                                    aria-label={`${customItem.name}を編集`}
+                                  >
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                    >
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                                    </svg>
+                                  </button>
+                                </>
+                              ) : null}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setColorPickerOpen(
+                                      colorPickerOpen === item.id ? null : item.id
+                                    )
+                                  }
+                                  className={`h-3.5 w-3.5 rounded-full border border-white shadow ${
+                                    colorStyles[itemColors[item.id] ?? "cyan"].dot
+                                  }`}
+                                  aria-label={`${item.label}の色を選択`}
+                                />
+                                {colorPickerOpen === item.id ? (
+                                  <div
+                                    ref={colorPickerRef}
+                                    className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
+                                  >
+                                    <div className="grid grid-cols-4 gap-2">
+                                      {colorPalette.map((color) => (
+                                        <button
+                                          key={color.id}
+                                          type="button"
+                                          onClick={() =>
+                                            updateItemColor(item.id, color.id as ColorId)
+                                          }
+                                          className={`h-6 w-6 rounded-full border ${
+                                            color.id === itemColors[item.id]
+                                              ? "border-zinc-900"
+                                              : "border-transparent"
+                                          } ${color.dot}`}
+                                          aria-label={`${color.label}を選択`}
+                                        />
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
-                            ) : null}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -1782,7 +2374,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">昼</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">昼食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1811,7 +2403,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">夜</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">夕食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1967,25 +2559,7 @@ export default function AppPage() {
                 </label>
               </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
-                  <h3 className="text-xs font-semibold text-zinc-700">その他</h3>
-                </div>
-                <label className="flex w-fit items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={dayDoc.workout}
-                    onChange={() => {
-                      const nextValue = !dayDoc.workout;
-                      setDayDoc((prev) => ({ ...prev, workout: nextValue }));
-                      saveFields({ workout: nextValue });
-                    }}
-                    className="h-4 w-4 rounded border-zinc-300"
-                  />
-                  筋トレ 💪
-                </label>
-              </div>
+              {renderCustomInputs()}
             </div>
             </div>
           </aside>
