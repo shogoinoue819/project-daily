@@ -22,8 +22,8 @@ import { useAuth } from "@/lib/hooks/useAuth";
 
 const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
 
-type MealOption = "home" | "lab" | "out" | "other";
-type LegacyMealOption = MealOption | "none";
+type MealOption = "home" | "lab" | "out";
+type LegacyMealOption = MealOption | "none" | "other";
 
 type DayDoc = {
   date?: Timestamp;
@@ -68,7 +68,6 @@ const mealOptions: { value: MealOption; label: string }[] = [
   { value: "home", label: "自炊(家)" },
   { value: "lab", label: "自炊(研)" },
   { value: "out", label: "外食" },
-  { value: "other", label: "その他" },
 ];
 
 const baseFilterGroups = [
@@ -667,13 +666,11 @@ export default function AppPage() {
     home: "自炊(家)",
     lab: "自炊(研)",
     out: "外食",
-    other: "その他",
   };
   const mealShortLabel: Record<MealOption, string> = {
     home: "家",
     lab: "研",
     out: "外",
-    other: "他",
   };
 
   const buildChips = (date: Date) => {
@@ -1173,7 +1170,7 @@ export default function AppPage() {
         <div className="text-xs text-zinc-400">まだカスタム項目がありません。</div>
       ) : null}
       {customItems.map((item) => {
-        const label = item.displayLabel?.trim() || item.name;
+        const label = item.name;
         const value = customValues[item.id];
         if (item.inputType === "check") {
           return (
@@ -1189,21 +1186,42 @@ export default function AppPage() {
           );
         }
         if (item.inputType === "select") {
+          const options = item.options ?? [];
+          const optionCount = options.length;
+          const gridColsClass =
+            optionCount <= 1
+              ? "grid-cols-1"
+              : optionCount === 2
+                ? "grid-cols-2"
+                : optionCount === 3
+                  ? "grid-cols-3"
+                  : optionCount === 4
+                    ? "grid-cols-4"
+                    : optionCount <= 6
+                      ? "grid-cols-3"
+                      : "grid-cols-4";
           return (
             <div key={item.id} className="space-y-1">
               <div className="text-xs font-semibold text-zinc-500">{label}</div>
-              <select
-                value={typeof value === "string" ? value : ""}
-                onChange={(event) => updateCustomValue(item.id, event.target.value)}
-                className="w-full rounded border border-zinc-200 px-3 py-2 text-sm text-zinc-700"
-              >
-                <option value="">未選択</option>
-                {(item.options ?? []).map((option) => (
-                  <option key={option} value={option}>
+              <div className={`grid ${gridColsClass} gap-2 text-xs`}>
+                {options.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => {
+                      const nextValue = value === option ? "" : option;
+                      updateCustomValue(item.id, nextValue);
+                    }}
+                    className={`rounded-lg border px-3 py-2 ${
+                      value === option
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
+                    }`}
+                  >
                     {option}
-                  </option>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
           );
         }
@@ -1330,9 +1348,19 @@ export default function AppPage() {
                         <button
                           type="button"
                           onClick={openCreateCustomModal}
-                          className="rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 hover:bg-zinc-100"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                          aria-label="カスタム項目を追加"
                         >
-                          追加
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
                         </button>
                       ) : null}
                     </div>
@@ -1346,7 +1374,7 @@ export default function AppPage() {
                             <label className="flex items-center gap-2">
                               <input
                                 type="checkbox"
-                                checked={filters[item.id]}
+                                checked={filters[item.id] ?? false}
                                 onChange={(event) =>
                                   updateFilter(item.id, event.target.checked)
                                 }
@@ -1360,16 +1388,20 @@ export default function AppPage() {
                                   <button
                                     type="button"
                                     onClick={() => openEditCustomModal(customItem)}
-                                    className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100"
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                                    aria-label={`${customItem.name}を編集`}
                                   >
-                                    編集
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteCustomItem(customItem)}
-                                    className="rounded border border-red-200 px-1.5 py-0.5 text-[10px] text-red-500 hover:bg-red-50"
-                                  >
-                                    削除
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                    >
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                                    </svg>
                                   </button>
                                 </>
                               ) : null}
@@ -1674,7 +1706,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">昼</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">昼食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1703,7 +1735,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">夜</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">夕食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1874,9 +1906,6 @@ export default function AppPage() {
                     ? "カスタム項目を追加"
                     : "カスタム項目を編集"}
                 </h2>
-                <p className="text-xs text-zinc-500">
-                  右パネルに表示する入力欄を作成します。
-                </p>
               </div>
               <button
                 type="button"
@@ -1928,21 +1957,6 @@ export default function AppPage() {
                   ))}
                 </div>
               </div>
-              <div className="space-y-1">
-                <div className="text-xs font-semibold text-zinc-500">表示形式</div>
-                <input
-                  type="text"
-                  value={customForm.displayLabel}
-                  onChange={(event) =>
-                    setCustomForm((prev) => ({
-                      ...prev,
-                      displayLabel: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded border border-zinc-200 px-3 py-2 text-sm"
-                  placeholder="空欄なら項目名を使用"
-                />
-              </div>
               {customForm.inputType === "select" ? (
                 <div className="space-y-1">
                   <div className="text-xs font-semibold text-zinc-500">選択項目</div>
@@ -1959,6 +1973,21 @@ export default function AppPage() {
                   />
                 </div>
               ) : null}
+              <div className="space-y-1">
+                <div className="text-xs font-semibold text-zinc-500">カレンダー表示</div>
+                <input
+                  type="text"
+                  value={customForm.displayLabel}
+                  onChange={(event) =>
+                    setCustomForm((prev) => ({
+                      ...prev,
+                      displayLabel: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                  placeholder="空欄なら項目名を使用"
+                />
+              </div>
               {customFormError ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
                   {customFormError}
@@ -2049,9 +2078,19 @@ export default function AppPage() {
                         <button
                           type="button"
                           onClick={openCreateCustomModal}
-                          className="rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 hover:bg-zinc-100"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                          aria-label="カスタム項目を追加"
                         >
-                          追加
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
                         </button>
                       ) : null}
                     </div>
@@ -2065,7 +2104,7 @@ export default function AppPage() {
                             <label className="flex items-center gap-2">
                               <input
                                 type="checkbox"
-                                checked={filters[item.id]}
+                                checked={filters[item.id] ?? false}
                                 onChange={(event) =>
                                   updateFilter(item.id, event.target.checked)
                                 }
@@ -2079,16 +2118,20 @@ export default function AppPage() {
                                   <button
                                     type="button"
                                     onClick={() => openEditCustomModal(customItem)}
-                                    className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100"
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                                    aria-label={`${customItem.name}を編集`}
                                   >
-                                    編集
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteCustomItem(customItem)}
-                                    className="rounded border border-red-200 px-1.5 py-0.5 text-[10px] text-red-500 hover:bg-red-50"
-                                  >
-                                    削除
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                    >
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                                    </svg>
                                   </button>
                                 </>
                               ) : null}
@@ -2331,7 +2374,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">昼</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">昼食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
@@ -2360,7 +2403,7 @@ export default function AppPage() {
                   <h3 className="text-xs font-semibold text-zinc-700">夜</h3>
                 </div>
                 <div className="text-xs font-semibold text-zinc-500">夕食</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   {mealOptions.map((option) => (
                     <button
                       key={option.value}
