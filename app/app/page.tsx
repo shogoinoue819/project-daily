@@ -280,7 +280,7 @@ const computeSleepDuration = (prevSleep: string, wake: string, baseDate: Date) =
 };
 
 const normalizeMealValue = (value?: LegacyMealOption | null) => {
-  if (!value || value === "none") {
+  if (!value || value === "none" || value === "other") {
     return null;
   }
   return value;
