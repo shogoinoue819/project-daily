@@ -585,6 +585,7 @@ function AppPageContent() {
   const sharedDrawerRef = useRef<HTMLDivElement | null>(null);
   const sharedCalendarRef = useRef<HTMLDivElement | null>(null);
   const sharedColorPickerRef = useRef<HTMLDivElement | null>(null);
+  const pendingSharedSelectionRef = useRef<string | null>(null);
 
   const customFilterItems = useMemo(
     () =>
@@ -744,11 +745,20 @@ function AppPageContent() {
       setSelectedSharedId(sharedCalendars[0].id);
       return;
     }
+    if (selectedSharedId && sharedCalendars.some((calendar) => calendar.id === selectedSharedId)) {
+      if (pendingSharedSelectionRef.current === selectedSharedId) {
+        pendingSharedSelectionRef.current = null;
+      }
+      return;
+    }
     if (
       selectedSharedId &&
       sharedCalendars.length > 0 &&
       !sharedCalendars.some((calendar) => calendar.id === selectedSharedId)
     ) {
+      if (pendingSharedSelectionRef.current === selectedSharedId) {
+        return;
+      }
       setSelectedSharedId(sharedCalendars[0].id);
     }
   }, [calendarMode, selectedSharedId, sharedCalendars]);
@@ -1241,6 +1251,7 @@ function AppPageContent() {
       setSharedCreateModalOpen(false);
       setCalendarMode("shared");
       setSelectedSharedId(calendarRef.id);
+      pendingSharedSelectionRef.current = calendarRef.id;
       setSharedInviteCalendarId(calendarRef.id);
       setSharedInvitePreview({ name: payload.name, inviteCode });
       setSharedInviteModalOpen(true);
@@ -1296,6 +1307,7 @@ function AppPageContent() {
       );
       setCalendarMode("shared");
       setSelectedSharedId(inviteData.calendarId);
+      pendingSharedSelectionRef.current = inviteData.calendarId;
       setSharedJoinCode("");
     } catch (error) {
       console.error(error);
@@ -1999,7 +2011,7 @@ function AppPageContent() {
       return;
     }
     setSharedEditingDirty(false);
-  }, [calendarMode, selectedDateId]);
+  }, [calendarMode, selectedDate]);
   const customValues = dayDoc.custom ?? {};
   const editingCustomItem = editingCustomId
     ? customItems.find((item) => item.id === editingCustomId) ?? null
