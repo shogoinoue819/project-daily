@@ -1,0 +1,70 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    function isCalendarMemberFromParent(calendarId) {
+      return isSignedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/sharedCalendars/$(calendarId)).data.memberIds;
+    }
+
+    function isCalendarOwnerFromParent(calendarId) {
+      return isSignedIn()
+        && request.auth.uid == get(/databases/$(database)/documents/sharedCalendars/$(calendarId)).data.ownerId;
+    }
+
+    function isCalendarMemberFromResource() {
+      return isSignedIn() && request.auth.uid in resource.data.memberIds;
+    }
+
+    function isCreatingCalendar() {
+      return isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.memberIds.size() == 1
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.inviteCode is string;
+    }
+
+    function isJoiningCalendar() {
+      return isSignedIn()
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
+        && request.resource.data.memberIds.hasAll(resource.data.memberIds)
+        && request.resource.data.inviteCode == resource.data.inviteCode
+        && request.resource.data.ownerId == resource.data.ownerId;
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /sharedCalendars/{calendarId} {
+      allow create: if isCreatingCalendar();
+      allow read: if isCalendarMemberFromResource();
+      allow update: if isCalendarMemberFromResource() || isJoiningCalendar();
+      allow delete: if isOwner(resource.data.ownerId);
+
+      match /days/{dayId} {
+        allow read, create, update: if isCalendarMemberFromParent(calendarId);
+        allow delete: if isCalendarOwnerFromParent(calendarId);
+      }
+    }
+
+    match /sharedInvites/{inviteCode} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.calendarId is string;
+      allow update: if false;
+      allow delete: if isOwner(resource.data.ownerId);
+    }
+  }
+}
