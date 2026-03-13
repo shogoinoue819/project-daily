@@ -469,11 +469,11 @@ const formatDinnerRanges = (slots: number[]) => {
       prev = current;
       continue;
     }
-    ranges.push({ start, end: prev + 1 });
+    ranges.push({ start, end: prev });
     start = current;
     prev = current;
   }
-  ranges.push({ start, end: prev + 1 });
+  ranges.push({ start, end: prev });
   return ranges.map((range) => `${range.start}-${range.end}`).join(", ");
 };
 
@@ -1104,8 +1104,8 @@ function AppPageContent() {
     if (sharedEditingDirty) {
       if (sourceEntry) {
         setSharedEditingEntry(normalizeSharedEntry(sourceEntry));
-        setSharedEditingDirty(false);
       }
+      setSharedEditingDirty(false);
       return;
     }
     setSharedEditingEntry(normalizeSharedEntry(sourceEntry));
@@ -1214,13 +1214,20 @@ function AppPageContent() {
     setSharedCreateError(null);
     const calendarRef = doc(collection(db, "sharedCalendars"));
     let inviteCode = generateInviteCode();
+    let hasUniqueCode = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const inviteRef = doc(db, "sharedInvites", inviteCode);
       const snapshot = await getDoc(inviteRef);
       if (!snapshot.exists()) {
+        hasUniqueCode = true;
         break;
       }
       inviteCode = generateInviteCode();
+    }
+    if (!hasUniqueCode) {
+      setSharedCreateError("招待コードの生成に失敗しました。再度お試しください。");
+      setSharedCreateLoading(false);
+      return;
     }
     const payload = {
       name: sharedCalendarName.trim(),
