@@ -15,6 +15,11 @@ service cloud.firestore {
         && request.auth.uid in get(/databases/$(database)/documents/sharedCalendars/$(calendarId)).data.memberIds;
     }
 
+    function isCalendarOwnerFromParent(calendarId) {
+      return isSignedIn()
+        && request.auth.uid == get(/databases/$(database)/documents/sharedCalendars/$(calendarId)).data.ownerId;
+    }
+
     function isCalendarMemberFromResource() {
       return isSignedIn() && request.auth.uid in resource.data.memberIds;
     }
@@ -44,11 +49,11 @@ service cloud.firestore {
       allow create: if isCreatingCalendar();
       allow read: if isCalendarMemberFromResource();
       allow update: if isCalendarMemberFromResource() || isJoiningCalendar();
-      allow delete: if false;
+      allow delete: if isOwner(resource.data.ownerId);
 
       match /days/{dayId} {
         allow read, create, update: if isCalendarMemberFromParent(calendarId);
-        allow delete: if false;
+        allow delete: if isCalendarOwnerFromParent(calendarId);
       }
     }
 
@@ -58,7 +63,8 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.calendarId is string;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isOwner(resource.data.ownerId);
     }
   }
 }

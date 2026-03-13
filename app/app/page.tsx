@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import {
   Timestamp,
@@ -92,6 +92,7 @@ type SharedMemberInfo = {
 type SharedCalendar = {
   id: string;
   name: string;
+  description?: string;
   ownerId: string;
   memberIds: string[];
   memberInfo: Record<string, SharedMemberInfo>;
@@ -487,7 +488,6 @@ const buildDefaultItemColors = (items: CustomItem[]): Record<string, ColorId> =>
 
 function AppPageContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { user, loading } = useAuth();
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [currentMonthDate, setCurrentMonthDate] = useState(
@@ -531,24 +531,27 @@ function AppPageContent() {
     useState<SharedEntry>(defaultSharedEntry);
   const [sharedEditingDirty, setSharedEditingDirty] = useState(false);
   const pendingSharedWritesRef = useRef<Record<string, SharedEntry>>({});
-  const [sharedCreateModalOpen, setSharedCreateModalOpen] = useState(false);
+  const [sharedCalendarModalOpen, setSharedCalendarModalOpen] = useState(false);
+  const [sharedCalendarModalMode, setSharedCalendarModalMode] = useState<
+    "create" | "join"
+  >("create");
   const [sharedCalendarName, setSharedCalendarName] = useState("");
+  const [sharedCalendarDescription, setSharedCalendarDescription] = useState("");
   const [sharedCreateError, setSharedCreateError] = useState<string | null>(null);
   const [sharedCreateLoading, setSharedCreateLoading] = useState(false);
-  const [sharedInviteModalOpen, setSharedInviteModalOpen] = useState(false);
-  const [sharedInviteCalendarId, setSharedInviteCalendarId] = useState<string | null>(
-    null
-  );
-  const [sharedInviteCopied, setSharedInviteCopied] = useState<
-    "link" | "code" | null
-  >(null);
-  const [sharedInvitePreview, setSharedInvitePreview] = useState<{
-    name: string;
-    inviteCode: string;
-  } | null>(null);
+  const [sharedInviteCopied, setSharedInviteCopied] = useState<"code" | null>(null);
   const [sharedJoinCode, setSharedJoinCode] = useState("");
   const [sharedJoinError, setSharedJoinError] = useState<string | null>(null);
   const [sharedJoinLoading, setSharedJoinLoading] = useState(false);
+  const [sharedDetailModalOpen, setSharedDetailModalOpen] = useState(false);
+  const [sharedDetailCalendarId, setSharedDetailCalendarId] = useState<string | null>(
+    null
+  );
+  const [sharedDetailName, setSharedDetailName] = useState("");
+  const [sharedDetailDescription, setSharedDetailDescription] = useState("");
+  const [sharedDetailError, setSharedDetailError] = useState<string | null>(null);
+  const [sharedDetailSaving, setSharedDetailSaving] = useState(false);
+  const [sharedDetailDeleting, setSharedDetailDeleting] = useState(false);
   const [filters, setFilters] = useState<Record<FilterItemId, boolean>>(initialFilters);
   const [sharedFilters, setSharedFilters] =
     useState<Record<string, boolean>>(initialSharedFilters);
@@ -581,7 +584,6 @@ function AppPageContent() {
   });
   const [customFormError, setCustomFormError] = useState<string | null>(null);
   const colorPickerRef = useRef<HTMLDivElement | null>(null);
-  const handledInviteCodeRef = useRef<string | null>(null);
   const sharedDrawerRef = useRef<HTMLDivElement | null>(null);
   const sharedCalendarRef = useRef<HTMLDivElement | null>(null);
   const sharedColorPickerRef = useRef<HTMLDivElement | null>(null);
@@ -1069,12 +1071,12 @@ function AppPageContent() {
     [sharedCalendars, selectedSharedId]
   );
   const activeSharedCalendar = sharedCalendarDetail ?? selectedSharedCalendar;
-  const inviteModalCalendar = useMemo(() => {
-    if (!sharedInviteCalendarId) {
+  const detailCalendar = useMemo(() => {
+    if (!sharedDetailCalendarId) {
       return null;
     }
-    return sharedCalendars.find((calendar) => calendar.id === sharedInviteCalendarId) ?? null;
-  }, [sharedCalendars, sharedInviteCalendarId]);
+    return sharedCalendars.find((calendar) => calendar.id === sharedDetailCalendarId) ?? null;
+  }, [sharedCalendars, sharedDetailCalendarId]);
 
   const sharedPartnerId = useMemo(() => {
     if (!user || !activeSharedCalendar) {
@@ -1205,6 +1207,65 @@ function AppPageContent() {
     });
   };
 
+  const closeOverlayModals = () => {
+    setSharedCalendarModalOpen(false);
+    setSharedDetailModalOpen(false);
+    setCustomModalOpen(false);
+    setSharedCalendarName("");
+    setSharedCalendarDescription("");
+    setSharedJoinCode("");
+    setSharedCreateError(null);
+    setSharedJoinError(null);
+    setSharedDetailError(null);
+    setSharedInviteCopied(null);
+    setSharedDetailCalendarId(null);
+    setSharedDetailName("");
+    setSharedDetailDescription("");
+    setEditingCustomId(null);
+    setCustomForm({
+      name: "",
+      inputType: "check",
+      displayLabel: "",
+      optionsText: "",
+    });
+    setCustomFormError(null);
+  };
+
+  const openSharedCalendarModal = (mode: "create" | "join") => {
+    closeOverlayModals();
+    setSharedCalendarModalMode(mode);
+    if (mode === "create") {
+      setSharedCalendarName("");
+      setSharedCalendarDescription("");
+      setSharedCreateError(null);
+    } else {
+      setSharedJoinError(null);
+    }
+    setSharedCalendarModalOpen(true);
+  };
+
+  const closeSharedCalendarModal = () => {
+    setSharedCalendarModalOpen(false);
+    setSharedCreateError(null);
+    setSharedJoinError(null);
+  };
+
+  const openSharedDetailModal = (calendar: SharedCalendar) => {
+    closeOverlayModals();
+    setSharedDetailCalendarId(calendar.id);
+    setSharedDetailName(calendar.name);
+    setSharedDetailDescription(calendar.description ?? "");
+    setSharedDetailError(null);
+    setSharedInviteCopied(null);
+    setSharedDetailModalOpen(true);
+  };
+
+  const closeSharedDetailModal = () => {
+    setSharedDetailModalOpen(false);
+    setSharedDetailCalendarId(null);
+    setSharedDetailError(null);
+  };
+
   const createSharedCalendar = async () => {
     if (!user || !sharedCalendarName.trim()) {
       setSharedCreateError("カレンダー名を入力してください。");
@@ -1231,6 +1292,7 @@ function AppPageContent() {
     }
     const payload = {
       name: sharedCalendarName.trim(),
+      description: sharedCalendarDescription.trim(),
       ownerId: user.uid,
       memberIds: [user.uid],
       memberInfo: {
@@ -1255,24 +1317,17 @@ function AppPageContent() {
         createdAt: serverTimestamp(),
       });
       setSharedCalendarName("");
-      setSharedCreateModalOpen(false);
+      setSharedCalendarDescription("");
+      setSharedCalendarModalOpen(false);
       setCalendarMode("shared");
       setSelectedSharedId(calendarRef.id);
       pendingSharedSelectionRef.current = calendarRef.id;
-      setSharedInviteCalendarId(calendarRef.id);
-      setSharedInvitePreview({ name: payload.name, inviteCode });
-      setSharedInviteModalOpen(true);
     } catch (error) {
       console.error(error);
       setSharedCreateError("共有カレンダーの作成に失敗しました。");
     } finally {
       setSharedCreateLoading(false);
     }
-  };
-
-  const closeSharedCreateModal = () => {
-    setSharedCreateModalOpen(false);
-    setSharedCreateError(null);
   };
 
   const joinSharedCalendarByCode = useCallback(async (code: string) => {
@@ -1316,6 +1371,7 @@ function AppPageContent() {
       setSelectedSharedId(inviteData.calendarId);
       pendingSharedSelectionRef.current = inviteData.calendarId;
       setSharedJoinCode("");
+      setSharedCalendarModalOpen(false);
     } catch (error) {
       console.error(error);
       setSharedJoinError("参加に失敗しました。再度お試しください。");
@@ -1324,35 +1380,80 @@ function AppPageContent() {
     }
   }, [user]);
 
-  const closeSharedInviteModal = () => {
-    setSharedInviteModalOpen(false);
-    setSharedInviteCalendarId(null);
-    setSharedInvitePreview(null);
-  };
-
-  useEffect(() => {
-    if (!user) {
+  const saveSharedCalendarDetails = async () => {
+    if (!user || !sharedDetailCalendarId) {
       return;
     }
-    const inviteCode = searchParams?.get("invite");
-    if (!inviteCode || handledInviteCodeRef.current === inviteCode) {
+    if (!sharedDetailName.trim()) {
+      setSharedDetailError("カレンダー名を入力してください。");
       return;
     }
-    handledInviteCodeRef.current = inviteCode;
-    joinSharedCalendarByCode(inviteCode);
-  }, [joinSharedCalendarByCode, searchParams, user]);
-
-  const getInviteLink = (code: string) => {
-    if (typeof window === "undefined") {
-      return "";
+    setSharedDetailSaving(true);
+    setSharedDetailError(null);
+    try {
+      await setDoc(
+        doc(db, "sharedCalendars", sharedDetailCalendarId),
+        {
+          name: sharedDetailName.trim(),
+          description: sharedDetailDescription.trim(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setSharedDetailModalOpen(false);
+      setSharedDetailCalendarId(null);
+    } catch (error) {
+      console.error(error);
+      setSharedDetailError("更新に失敗しました。再度お試しください。");
+    } finally {
+      setSharedDetailSaving(false);
     }
-    return `${window.location.origin}/app?invite=${code}`;
   };
 
-  const copyInviteText = async (text: string, type: "link" | "code") => {
+  const deleteSharedCalendar = async () => {
+    if (!user || !sharedDetailCalendarId) {
+      return;
+    }
+    const calendar =
+      sharedCalendars.find((item) => item.id === sharedDetailCalendarId) ?? null;
+    if (!calendar) {
+      return;
+    }
+    if (!window.confirm("このカレンダーを削除しますか？")) {
+      return;
+    }
+    setSharedDetailDeleting(true);
+    setSharedDetailError(null);
+    try {
+      const batch = writeBatch(db);
+      const daysSnapshot = await getDocs(
+        collection(db, "sharedCalendars", calendar.id, "days")
+      );
+      daysSnapshot.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      if (calendar.inviteCode) {
+        batch.delete(doc(db, "sharedInvites", calendar.inviteCode));
+      }
+      batch.delete(doc(db, "sharedCalendars", calendar.id));
+      await batch.commit();
+      if (selectedSharedId === calendar.id) {
+        setSelectedSharedId(null);
+      }
+      setSharedDetailModalOpen(false);
+      setSharedDetailCalendarId(null);
+    } catch (error) {
+      console.error(error);
+      setSharedDetailError("削除に失敗しました。再度お試しください。");
+    } finally {
+      setSharedDetailDeleting(false);
+    }
+  };
+
+  const copyInviteText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setSharedInviteCopied(type);
+      setSharedInviteCopied("code");
       setTimeout(() => setSharedInviteCopied(null), 2000);
     } catch (error) {
       console.error(error);
@@ -1681,6 +1782,7 @@ function AppPageContent() {
   };
 
   const openCreateCustomModal = () => {
+    closeOverlayModals();
     setCustomModalMode("create");
     setEditingCustomId(null);
     setCustomForm({
@@ -1694,6 +1796,7 @@ function AppPageContent() {
   };
 
   const openEditCustomModal = (item: CustomItem) => {
+    closeOverlayModals();
     setCustomModalMode("edit");
     setEditingCustomId(item.id);
     setCustomForm({
@@ -2023,20 +2126,6 @@ function AppPageContent() {
   const editingCustomItem = editingCustomId
     ? customItems.find((item) => item.id === editingCustomId) ?? null
     : null;
-  const sharedInviteCode = activeSharedCalendar?.inviteCode ?? "";
-  const sharedInviteLink = sharedInviteCode ? getInviteLink(sharedInviteCode) : "";
-  const inviteModalName =
-    inviteModalCalendar?.name ?? sharedInvitePreview?.name ?? "";
-  const inviteModalCode =
-    inviteModalCalendar?.inviteCode ?? sharedInvitePreview?.inviteCode ?? "";
-  const inviteModalLink = inviteModalCode ? getInviteLink(inviteModalCode) : "";
-  const sharedMailtoLink = sharedInviteLink
-    ? `mailto:?subject=${encodeURIComponent(
-        "共有カレンダーの招待"
-      )}&body=${encodeURIComponent(
-        `招待コード: ${sharedInviteCode}\n招待リンク: ${sharedInviteLink}`
-      )}`
-    : "";
   const activeMonthError = calendarMode === "shared" ? sharedMonthError : monthError;
   const activeMonthLoading =
     calendarMode === "shared" ? sharedMonthLoading : monthLoading;
@@ -2334,14 +2423,14 @@ function AppPageContent() {
   ) => (
     <div className="space-y-1">
       <div className="text-xs font-semibold text-zinc-500">{label}</div>
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {sharedMealStatusOptions.map((option) => (
           <button
             key={option.value}
             type="button"
             disabled={disabled}
             onClick={() => onChange(option.value)}
-            className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+            className={`w-full rounded-lg border px-3 py-2 text-xs font-semibold ${
               value === option.value
                 ? "border-zinc-900 bg-zinc-900 text-white"
                 : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
@@ -2438,7 +2527,17 @@ function AppPageContent() {
         <section className="hidden w-full lg:block lg:w-64">
           <div className="space-y-3">
             <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
-              <h2 className="text-sm font-semibold text-zinc-700">カレンダー</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-zinc-700">カレンダー</h2>
+                <button
+                  type="button"
+                  onClick={() => openSharedCalendarModal("create")}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 text-sm text-zinc-600 hover:bg-zinc-100"
+                  aria-label="カレンダーを追加"
+                >
+                  +
+                </button>
+              </div>
               <div className="mt-4 space-y-2 text-sm text-zinc-700">
                 <button
                   type="button"
@@ -2458,23 +2557,27 @@ function AppPageContent() {
                   const members = calendar.memberIds.map(
                     (memberId) => calendar.memberInfo?.[memberId]
                   );
+                  const selected = calendarMode === "shared" && selectedSharedId === calendar.id;
                   return (
-                    <button
+                    <div
                       key={calendar.id}
-                      type="button"
-                      onClick={() => {
-                        setCalendarMode("shared");
-                        setSelectedSharedId(calendar.id);
-                      }}
-                      className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
-                        calendarMode === "shared" && selectedSharedId === calendar.id
+                      className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-sm ${
+                        selected
                           ? "border-zinc-900 bg-zinc-900 text-white"
                           : "border-zinc-200 text-zinc-700 hover:border-zinc-400"
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate">{calendar.name}</span>
-                        <div className="flex -space-x-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCalendarMode("shared");
+                          setSelectedSharedId(calendar.id);
+                        }}
+                        className="flex-1 text-left"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate">{calendar.name}</span>
+                          <div className="flex -space-x-1">
                             {members.map((member, index) =>
                               member?.photoURL ? (
                                 <Image
@@ -2486,17 +2589,33 @@ function AppPageContent() {
                                   className="h-5 w-5 rounded-full border border-white object-cover"
                                 />
                               ) : (
-                              <span
-                                key={`${calendar.id}-member-${index}`}
-                                className="flex h-5 w-5 items-center justify-center rounded-full border border-white bg-zinc-200 text-[10px] text-zinc-500"
-                              >
-                                ?
-                              </span>
-                            )
-                          )}
+                                <span
+                                  key={`${calendar.id}-member-${index}`}
+                                  className="flex h-5 w-5 items-center justify-center rounded-full border border-white bg-zinc-200 text-[10px] text-zinc-500"
+                                >
+                                  ?
+                                </span>
+                              )
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openSharedDetailModal(calendar);
+                        }}
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded ${
+                          selected
+                            ? "text-white/80 hover:bg-white/10"
+                            : "text-zinc-500 hover:bg-zinc-100"
+                        }`}
+                        aria-label="カレンダー詳細を開く"
+                      >
+                        ⋯
+                      </button>
+                    </div>
                   );
                 })}
                 {sharedCalendars.length === 0 ? (
@@ -2505,77 +2624,6 @@ function AppPageContent() {
                   </div>
                 ) : null}
               </div>
-              <div className="mt-4 space-y-2">
-                <button
-                  type="button"
-                  onClick={() => setSharedCreateModalOpen(true)}
-                  className="w-full rounded-full border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
-                >
-                  共有カレンダーを新規作成
-                </button>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={sharedJoinCode}
-                    onChange={(event) => setSharedJoinCode(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        joinSharedCalendarByCode(sharedJoinCode);
-                      }
-                    }}
-                    className="h-9 w-full rounded border border-zinc-200 px-3 text-xs text-zinc-700"
-                    placeholder="招待コードを入力"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => joinSharedCalendarByCode(sharedJoinCode)}
-                    disabled={sharedJoinLoading}
-                    className="rounded-full bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
-                  >
-                    参加
-                  </button>
-                </div>
-                {sharedJoinError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                    {sharedJoinError}
-                  </div>
-                ) : null}
-              </div>
-              {calendarMode === "shared" && activeSharedCalendar ? (
-                <div className="mt-4 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
-                  <div className="font-semibold text-zinc-700">招待リンク</div>
-                  <div className="break-all">{sharedInviteLink || "リンク生成中..."}</div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => copyInviteText(sharedInviteLink, "link")}
-                      disabled={!sharedInviteLink}
-                      className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white disabled:opacity-50"
-                    >
-                      {sharedInviteCopied === "link" ? "コピーしました" : "リンクをコピー"}
-                    </button>
-                    {sharedMailtoLink ? (
-                      <a
-                        href={sharedMailtoLink}
-                        className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
-                      >
-                        メール招待
-                      </a>
-                    ) : null}
-                  </div>
-                  <div className="font-semibold text-zinc-700">招待コード</div>
-                  <div className="text-sm font-semibold tracking-widest text-zinc-800">
-                    {sharedInviteCode}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyInviteText(sharedInviteCode, "code")}
-                    className="w-fit rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
-                  >
-                    {sharedInviteCopied === "code" ? "コピーしました" : "コードをコピー"}
-                  </button>
-                </div>
-              ) : null}
             </div>
             <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
               <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
@@ -2589,25 +2637,31 @@ function AppPageContent() {
             ref={sharedCalendarRef}
             className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
           >
-            <div className="grid grid-cols-7 gap-2 border-b border-zinc-100 pb-2 text-center text-xs font-semibold text-zinc-500">
-              {weekdays.map((day) => (
-                <div key={day}>{day}</div>
-              ))}
-            </div>
-            {activeMonthError ? (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                {activeMonthError}
-              </div>
-            ) : null}
-            {activeMonthLoading ? (
-              <div className="mt-3 text-xs text-zinc-400">月データを読み込み中...</div>
-            ) : null}
-            <div
-              className="mt-3 grid grid-cols-7 border border-zinc-200 text-xs [--calendar-row-height:122px] sm:[--calendar-row-height:128px] lg:[--calendar-row-height:144px]"
-              style={{
-                gridTemplateRows: `repeat(${calendarMeta.weeks}, var(--calendar-row-height))`,
-              }}
-            >
+            <div className={isMobile && calendarMode === "shared" ? "overflow-x-auto" : ""}>
+              <div
+                className={
+                  isMobile && calendarMode === "shared" ? "min-w-[900px]" : ""
+                }
+              >
+                <div className="grid grid-cols-7 gap-2 border-b border-zinc-100 pb-2 text-center text-xs font-semibold text-zinc-500">
+                  {weekdays.map((day) => (
+                    <div key={day}>{day}</div>
+                  ))}
+                </div>
+                {activeMonthError ? (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                    {activeMonthError}
+                  </div>
+                ) : null}
+                {activeMonthLoading ? (
+                  <div className="mt-3 text-xs text-zinc-400">月データを読み込み中...</div>
+                ) : null}
+                <div
+                  className="mt-3 grid grid-cols-7 border border-zinc-200 text-xs [--calendar-row-height:122px] sm:[--calendar-row-height:128px] lg:[--calendar-row-height:144px]"
+                  style={{
+                    gridTemplateRows: `repeat(${calendarMeta.weeks}, var(--calendar-row-height))`,
+                  }}
+                >
               {calendarMeta.cells.map((date) => {
                 const dateId = formatDateId(date);
                 const chips = calendarMode === "personal" ? buildChips(date) : [];
@@ -2682,6 +2736,8 @@ function AppPageContent() {
                   </button>
                 );
               })}
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -3099,29 +3155,34 @@ function AppPageContent() {
                   <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
                   <h3 className="text-xs font-semibold text-zinc-700">夜の時間帯</h3>
                 </div>
-                <div
-                  className={`grid grid-cols-3 gap-2 ${
-                    canEditDinnerSlots ? "" : "opacity-40"
-                  }`}
-                >
-                  {sharedDinnerSlots.map((slot) => {
-                    const active = sharedEditingEntry.dinnerSlots.includes(slot);
-                    return (
-                      <button
-                        key={slot}
-                        type="button"
-                        disabled={!canEditDinnerSlots}
-                        onClick={() => toggleSharedDinnerSlot(slot)}
-                        className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-                          active
-                            ? "border-zinc-900 bg-zinc-900 text-white"
-                            : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
-                        } ${!canEditDinnerSlots ? "cursor-not-allowed" : ""}`}
+                <div className={canEditDinnerSlots ? "" : "opacity-40"}>
+                  <div className="flex h-10 overflow-hidden rounded-lg border border-zinc-200 divide-x divide-zinc-200">
+                    {sharedDinnerSlots.map((slot) => {
+                      const active = sharedEditingEntry.dinnerSlots.includes(slot);
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          disabled={!canEditDinnerSlots}
+                          onClick={() => toggleSharedDinnerSlot(slot)}
+                          className={`flex-1 ${
+                            active ? "bg-zinc-900" : "bg-white hover:bg-zinc-100"
+                          } ${!canEditDinnerSlots ? "cursor-not-allowed" : ""}`}
+                          aria-label={`${slot}:00-${slot + 1}:00`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="mt-1 grid grid-cols-7 text-[10px] text-zinc-400">
+                    {[18, 19, 20, 21, 22, 23, 24].map((label) => (
+                      <div
+                        key={label}
+                        className={label === 24 ? "text-right" : "text-left"}
                       >
-                        {slot}:00
-                      </button>
-                    );
-                  })}
+                        {label}
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 {!canEditDinnerSlots ? (
                   <div className="text-[11px] text-zinc-400">
@@ -3152,73 +3213,171 @@ function AppPageContent() {
           </div>
         </aside>
       ) : null}
-      {sharedCreateModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+      {sharedCalendarModalOpen ? (
+        <div
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-4"
+          onClick={closeSharedCalendarModal}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-zinc-900">
-                  共有カレンダーを新規作成
+                  カレンダーを追加
                 </h2>
-                <p className="text-xs text-zinc-500">恋人との食事・家事を共有</p>
+                <p className="text-xs text-zinc-500">
+                  新規作成または参加を選択
+                </p>
               </div>
               <button
                 type="button"
-                onClick={closeSharedCreateModal}
+                onClick={closeSharedCalendarModal}
                 className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-200 text-zinc-500"
                 aria-label="モーダルを閉じる"
               >
                 ✕
               </button>
             </div>
-            <div className="mt-4 space-y-2 text-sm text-zinc-700">
-              <div className="text-xs font-semibold text-zinc-500">カレンダー名</div>
-              <input
-                type="text"
-                value={sharedCalendarName}
-                onChange={(event) => setSharedCalendarName(event.target.value)}
-                className="w-full rounded border border-zinc-200 px-3 py-2 text-sm"
-                placeholder="例: ふたりの家事カレンダー"
-              />
-              {sharedCreateError ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                  {sharedCreateError}
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSharedCalendarModalMode("create");
+                  setSharedCreateError(null);
+                  setSharedJoinError(null);
+                }}
+                className={`flex-1 rounded-full border px-3 py-2 text-xs font-semibold ${
+                  sharedCalendarModalMode === "create"
+                    ? "border-zinc-900 bg-zinc-900 text-white"
+                    : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                新規作成
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSharedCalendarModalMode("join");
+                  setSharedCreateError(null);
+                  setSharedJoinError(null);
+                }}
+                className={`flex-1 rounded-full border px-3 py-2 text-xs font-semibold ${
+                  sharedCalendarModalMode === "join"
+                    ? "border-zinc-900 bg-zinc-900 text-white"
+                    : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                参加
+              </button>
+            </div>
+            {sharedCalendarModalMode === "create" ? (
+              <div className="mt-4 space-y-3 text-sm text-zinc-700">
+                <div>
+                  <div className="text-xs font-semibold text-zinc-500">カレンダー名</div>
+                  <input
+                    type="text"
+                    value={sharedCalendarName}
+                    onChange={(event) => setSharedCalendarName(event.target.value)}
+                    className="mt-1 w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                    placeholder="例: ふたりの家事カレンダー"
+                  />
                 </div>
-              ) : null}
-            </div>
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeSharedCreateModal}
-                className="rounded-full border border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
-              >
-                キャンセル
-              </button>
-              <button
-                type="button"
-                onClick={createSharedCalendar}
-                disabled={sharedCreateLoading}
-                className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
-              >
-                作成する
-              </button>
-            </div>
+                <div>
+                  <div className="text-xs font-semibold text-zinc-500">説明</div>
+                  <textarea
+                    value={sharedCalendarDescription}
+                    onChange={(event) => setSharedCalendarDescription(event.target.value)}
+                    className="mt-1 w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                    rows={3}
+                    placeholder="例: 週間の食事と家事の予定を共有"
+                  />
+                </div>
+                {sharedCreateError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                    {sharedCreateError}
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeSharedCalendarModal}
+                    className="rounded-full border border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="button"
+                    onClick={createSharedCalendar}
+                    disabled={sharedCreateLoading}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    作成する
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3 text-sm text-zinc-700">
+                <div className="text-xs font-semibold text-zinc-500">招待コード</div>
+                <input
+                  type="text"
+                  value={sharedJoinCode}
+                  onChange={(event) => setSharedJoinCode(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      joinSharedCalendarByCode(sharedJoinCode);
+                    }
+                  }}
+                  className="w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                  placeholder="招待コードを入力"
+                />
+                {sharedJoinError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                    {sharedJoinError}
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeSharedCalendarModal}
+                    className="rounded-full border border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => joinSharedCalendarByCode(sharedJoinCode)}
+                    disabled={sharedJoinLoading}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    参加する
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
-      {sharedInviteModalOpen && (inviteModalCalendar || sharedInvitePreview) ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+      {sharedDetailModalOpen && detailCalendar ? (
+        <div
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-4"
+          onClick={closeSharedDetailModal}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-zinc-900">
-                  招待リンクを共有
+                  カレンダーの詳細
                 </h2>
-                <p className="text-xs text-zinc-500">{inviteModalName}</p>
+                <p className="text-xs text-zinc-500">{detailCalendar.name}</p>
               </div>
               <button
                 type="button"
-                onClick={closeSharedInviteModal}
+                onClick={closeSharedDetailModal}
                 className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-200 text-zinc-500"
                 aria-label="モーダルを閉じる"
               >
@@ -3227,50 +3386,108 @@ function AppPageContent() {
             </div>
             <div className="mt-4 space-y-3 text-sm text-zinc-700">
               <div>
-                <div className="text-xs font-semibold text-zinc-500">招待リンク</div>
-                <div className="mt-1 break-all rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-                  {inviteModalLink}
+                <div className="text-xs font-semibold text-zinc-500">共有相手</div>
+                <div className="mt-2 space-y-2">
+                  {detailCalendar.memberIds.map((memberId) => {
+                    const member = detailCalendar.memberInfo?.[memberId];
+                    return (
+                      <div key={memberId} className="flex items-center gap-2">
+                        {member?.photoURL ? (
+                          <Image
+                            src={member.photoURL}
+                            alt={member.displayName}
+                            width={24}
+                            height={24}
+                            className="h-6 w-6 rounded-full border border-white object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white bg-zinc-200 text-[10px] text-zinc-500">
+                            ?
+                          </span>
+                        )}
+                        <span className="text-sm">{member?.displayName ?? "ユーザー"}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => copyInviteText(inviteModalLink, "link")}
-                  disabled={!inviteModalLink}
-                  className="mt-2 rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white disabled:opacity-50"
-                >
-                  {sharedInviteCopied === "link" ? "コピーしました" : "リンクをコピー"}
-                </button>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-zinc-500">カレンダー名</div>
+                <input
+                  type="text"
+                  value={sharedDetailName}
+                  onChange={(event) => setSharedDetailName(event.target.value)}
+                  className="mt-1 w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-zinc-500">説明</div>
+                <textarea
+                  value={sharedDetailDescription}
+                  onChange={(event) => setSharedDetailDescription(event.target.value)}
+                  className="mt-1 w-full rounded border border-zinc-200 px-3 py-2 text-sm"
+                  rows={3}
+                />
               </div>
               <div>
                 <div className="text-xs font-semibold text-zinc-500">招待コード</div>
-                <div className="mt-1 rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold tracking-widest text-zinc-800">
-                  {inviteModalCode}
+                <div className="mt-1 flex items-center gap-2">
+                  <div className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold tracking-widest text-zinc-800">
+                    {detailCalendar.inviteCode}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyInviteText(detailCalendar.inviteCode)}
+                    className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
+                  >
+                    {sharedInviteCopied === "code" ? "コピーしました" : "コードをコピー"}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => copyInviteText(inviteModalCode, "code")}
-                  className="mt-2 rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
-                >
-                  {sharedInviteCopied === "code" ? "コピーしました" : "コードをコピー"}
-                </button>
               </div>
-              {inviteModalLink ? (
-                <a
-                  href={`mailto:?subject=${encodeURIComponent(
-                    "共有カレンダーの招待"
-                  )}&body=${encodeURIComponent(
-                    `招待コード: ${inviteModalCode}\n招待リンク: ${inviteModalLink}`
-                  )}`}
-                  className="inline-flex items-center justify-center rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
-                >
-                  メール招待
-                </a>
+              {sharedDetailError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                  {sharedDetailError}
+                </div>
               ) : null}
+              <div className="flex items-center justify-between gap-2 pt-2">
+                {user?.uid === detailCalendar.ownerId ? (
+                  <button
+                    type="button"
+                    onClick={deleteSharedCalendar}
+                    disabled={sharedDetailDeleting}
+                    className="rounded-full border border-red-200 px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    削除する
+                  </button>
+                ) : (
+                  <span className="text-xs text-zinc-400">
+                    削除はオーナーのみ可能です
+                  </span>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={closeSharedDetailModal}
+                    className="rounded-full border border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+                  >
+                    閉じる
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveSharedCalendarDetails}
+                    disabled={sharedDetailSaving}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    保存する
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       ) : null}
       {customModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -3429,41 +3646,55 @@ function AppPageContent() {
               </button>
             </div>
             <div className="space-y-3">
-              <div className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm">
+            <div className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm">
+              <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-zinc-700">カレンダー</h2>
-                <div className="mt-3 space-y-2 text-sm text-zinc-700">
-                  <button
-                    type="button"
+                <button
+                  type="button"
+                  onClick={() => openSharedCalendarModal("create")}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 text-sm text-zinc-600 hover:bg-zinc-100"
+                  aria-label="カレンダーを追加"
+                >
+                  +
+                </button>
+              </div>
+              <div className="mt-3 space-y-2 text-sm text-zinc-700">
+                <button
+                  type="button"
                   onClick={() => {
                     setCalendarMode("personal");
                     setLeftDrawerOpen(false);
                   }}
-                    className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
-                      calendarMode === "personal"
-                        ? "border-zinc-900 bg-zinc-900 text-white"
-                        : "border-zinc-200 text-zinc-700 hover:border-zinc-400"
-                    }`}
-                  >
-                    自分専用
-                  </button>
-                  {sharedCalendars.map((calendar) => {
-                    const members = calendar.memberIds.map(
-                      (memberId) => calendar.memberInfo?.[memberId]
-                    );
-                    return (
+                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
+                    calendarMode === "personal"
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 text-zinc-700 hover:border-zinc-400"
+                  }`}
+                >
+                  自分専用
+                </button>
+                {sharedCalendars.map((calendar) => {
+                  const members = calendar.memberIds.map(
+                    (memberId) => calendar.memberInfo?.[memberId]
+                  );
+                  const selected = calendarMode === "shared" && selectedSharedId === calendar.id;
+                  return (
+                    <div
+                      key={calendar.id}
+                      className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-sm ${
+                        selected
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 text-zinc-700 hover:border-zinc-400"
+                      }`}
+                    >
                       <button
-                        key={calendar.id}
                         type="button"
                         onClick={() => {
                           setCalendarMode("shared");
                           setSelectedSharedId(calendar.id);
                           setLeftDrawerOpen(false);
                         }}
-                        className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
-                          calendarMode === "shared" && selectedSharedId === calendar.id
-                            ? "border-zinc-900 bg-zinc-900 text-white"
-                            : "border-zinc-200 text-zinc-700 hover:border-zinc-400"
-                        }`}
+                        className="flex-1 text-left"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate">{calendar.name}</span>
@@ -3490,86 +3721,31 @@ function AppPageContent() {
                           </div>
                         </div>
                       </button>
-                    );
-                  })}
-                  {sharedCalendars.length === 0 ? (
-                    <div className="text-xs text-zinc-400">
-                      共有カレンダーはまだありません。
-                    </div>
-                  ) : null}
-                </div>
-                <div className="mt-3 space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => setSharedCreateModalOpen(true)}
-                    className="w-full rounded-full border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
-                  >
-                    共有カレンダーを新規作成
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={sharedJoinCode}
-                      onChange={(event) => setSharedJoinCode(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          joinSharedCalendarByCode(sharedJoinCode);
-                        }
-                      }}
-                      className="h-9 w-full rounded border border-zinc-200 px-3 text-xs text-zinc-700"
-                      placeholder="招待コードを入力"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => joinSharedCalendarByCode(sharedJoinCode)}
-                      disabled={sharedJoinLoading}
-                      className="rounded-full bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
-                    >
-                      参加
-                    </button>
-                  </div>
-                  {sharedJoinError ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                      {sharedJoinError}
-                    </div>
-                  ) : null}
-                </div>
-              {calendarMode === "shared" && activeSharedCalendar ? (
-                  <div className="mt-3 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
-                    <div className="font-semibold text-zinc-700">招待リンク</div>
-                    <div className="break-all">{sharedInviteLink || "リンク生成中..."}</div>
-                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => copyInviteText(sharedInviteLink, "link")}
-                        disabled={!sharedInviteLink}
-                        className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white disabled:opacity-50"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openSharedDetailModal(calendar);
+                        }}
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded ${
+                          selected
+                            ? "text-white/80 hover:bg-white/10"
+                            : "text-zinc-500 hover:bg-zinc-100"
+                        }`}
+                        aria-label="カレンダー詳細を開く"
                       >
-                        {sharedInviteCopied === "link" ? "コピーしました" : "リンクをコピー"}
+                        ⋯
                       </button>
-                      {sharedMailtoLink ? (
-                        <a
-                          href={sharedMailtoLink}
-                          className="rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
-                        >
-                          メール招待
-                        </a>
-                      ) : null}
                     </div>
-                    <div className="font-semibold text-zinc-700">招待コード</div>
-                    <div className="text-sm font-semibold tracking-widest text-zinc-800">
-                      {sharedInviteCode}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => copyInviteText(sharedInviteCode, "code")}
-                      className="w-fit rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-semibold text-zinc-600 hover:bg-white"
-                    >
-                      {sharedInviteCopied === "code" ? "コピーしました" : "コードをコピー"}
-                    </button>
+                  );
+                })}
+                {sharedCalendars.length === 0 ? (
+                  <div className="text-xs text-zinc-400">
+                    共有カレンダーはまだありません。
                   </div>
                 ) : null}
               </div>
+            </div>
               <div className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm">
                 <h2 className="text-sm font-semibold text-zinc-700">カテゴリ</h2>
                 {calendarMode === "personal"
