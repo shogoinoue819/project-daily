@@ -95,6 +95,7 @@ type SharedCalendar = {
   ownerId: string;
   memberIds: string[];
   memberInfo: Record<string, SharedMemberInfo>;
+  memberColors?: Record<string, Record<string, ColorId>>;
   inviteCode: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
@@ -115,14 +116,13 @@ const defaultSharedEntry: SharedEntry = {
 };
 
 const sharedMealStatusOptions: { value: SharedMealStatus; label: string }[] = [
-  { value: "ok", label: "○" },
+  { value: "ok", label: "〇" },
   { value: "maybe", label: "△" },
   { value: "no", label: "×" },
-  { value: "unset", label: "未" },
 ];
 
 const sharedMealStatusLabel: Record<SharedMealStatus, string> = {
-  ok: "○",
+  ok: "〇",
   maybe: "△",
   no: "×",
   unset: "-",
@@ -268,6 +268,45 @@ const initialFilters = Object.fromEntries(
   baseFilterItemIds.map((id) => [id, true])
 ) as Record<FilterItemId, boolean>;
 
+const sharedFilterGroups = [
+  {
+    id: "shared-meal",
+    label: "食事",
+    items: [
+      { id: "shared-breakfast", label: "朝" },
+      { id: "shared-lunch", label: "昼" },
+      { id: "shared-dinner", label: "夜" },
+      { id: "shared-dinner-slots", label: "夜の時間帯" },
+    ],
+  },
+  {
+    id: "shared-chores",
+    label: "家事",
+    items: sharedChoreItems.map((item) => ({
+      id: `shared-${item.id}`,
+      label: item.label,
+    })),
+  },
+] as const;
+
+const sharedFilterItemIds = sharedFilterGroups.flatMap((group) =>
+  group.items.map((item) => item.id)
+);
+
+const initialSharedFilters = Object.fromEntries(
+  sharedFilterItemIds.map((id) => [id, true])
+) as Record<string, boolean>;
+
+const defaultSharedItemColors: Record<string, ColorId> = {
+  "shared-breakfast": "orange",
+  "shared-lunch": "orange",
+  "shared-dinner": "orange",
+  "shared-dinner-slots": "purple",
+  ...Object.fromEntries(
+    sharedChoreItems.map((item) => [`shared-${item.id}`, "teal" as ColorId])
+  ),
+};
+
 const formatDateId = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate()
@@ -406,7 +445,10 @@ const isSameSharedEntry = (a?: SharedEntry, b?: SharedEntry) => {
   for (let i = 0; i < a.dinnerSlots.length; i += 1) {
     if (a.dinnerSlots[i] !== b.dinnerSlots[i]) return false;
   }
-  const choreKeys = Object.keys(a.chores) as SharedChoreId[];
+  const choreKeys = new Set([
+    ...Object.keys(a.chores),
+    ...Object.keys(b.chores),
+  ]) as Set<SharedChoreId>;
   for (const key of choreKeys) {
     if (a.chores[key] !== b.chores[key]) return false;
   }
@@ -475,13 +517,16 @@ function AppPageContent() {
   const [monthError, setMonthError] = useState<string | null>(null);
   const [sharedCalendars, setSharedCalendars] = useState<SharedCalendar[]>([]);
   const [selectedSharedId, setSelectedSharedId] = useState<string | null>(null);
+  const [sharedCalendarDetail, setSharedCalendarDetail] = useState<SharedCalendar | null>(
+    null
+  );
   const [sharedMonthData, setSharedMonthData] = useState<Record<string, SharedDayDoc>>(
     {}
   );
   const [sharedMonthLoading, setSharedMonthLoading] = useState(false);
   const [sharedMonthError, setSharedMonthError] = useState<string | null>(null);
   const [sharedSaveError, setSharedSaveError] = useState<string | null>(null);
-  const [sharedModalOpen, setSharedModalOpen] = useState(false);
+  const [sharedDrawerOpen, setSharedDrawerOpen] = useState(false);
   const [sharedEditingEntry, setSharedEditingEntry] =
     useState<SharedEntry>(defaultSharedEntry);
   const [sharedEditingDirty, setSharedEditingDirty] = useState(false);
@@ -505,6 +550,8 @@ function AppPageContent() {
   const [sharedJoinError, setSharedJoinError] = useState<string | null>(null);
   const [sharedJoinLoading, setSharedJoinLoading] = useState(false);
   const [filters, setFilters] = useState<Record<FilterItemId, boolean>>(initialFilters);
+  const [sharedFilters, setSharedFilters] =
+    useState<Record<string, boolean>>(initialSharedFilters);
   const [isMobile, setIsMobile] = useState(false);
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
@@ -512,7 +559,12 @@ function AppPageContent() {
   const [itemColors, setItemColors] = useState<Record<string, ColorId>>(
     defaultItemColors
   );
+  const [sharedItemColors, setSharedItemColors] =
+    useState<Record<string, ColorId>>(defaultSharedItemColors);
   const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null);
+  const [sharedColorPickerOpen, setSharedColorPickerOpen] = useState<string | null>(
+    null
+  );
   const [customModalOpen, setCustomModalOpen] = useState(false);
   const [customModalMode, setCustomModalMode] = useState<"create" | "edit">("create");
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
@@ -530,6 +582,9 @@ function AppPageContent() {
   const [customFormError, setCustomFormError] = useState<string | null>(null);
   const colorPickerRef = useRef<HTMLDivElement | null>(null);
   const handledInviteCodeRef = useRef<string | null>(null);
+  const sharedDrawerRef = useRef<HTMLDivElement | null>(null);
+  const sharedCalendarRef = useRef<HTMLDivElement | null>(null);
+  const sharedColorPickerRef = useRef<HTMLDivElement | null>(null);
 
   const customFilterItems = useMemo(
     () =>
@@ -699,6 +754,27 @@ function AppPageContent() {
   }, [calendarMode, selectedSharedId, sharedCalendars]);
 
   useEffect(() => {
+    if (!user || !selectedSharedId) {
+      setSharedCalendarDetail(null);
+      return;
+    }
+    const ref = doc(db, "sharedCalendars", selectedSharedId);
+    const unsubscribe = onSnapshot(
+      ref,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data() as Omit<SharedCalendar, "id">;
+          setSharedCalendarDetail({ ...data, id: snapshot.id });
+        }
+      },
+      (error) => {
+        console.error(error);
+      }
+    );
+    return () => unsubscribe();
+  }, [selectedSharedId, user]);
+
+  useEffect(() => {
     if (!user || calendarMode !== "shared" || !selectedSharedId) {
       setSharedMonthData({});
       setSharedMonthLoading(false);
@@ -817,9 +893,27 @@ function AppPageContent() {
 
   useEffect(() => {
     if (calendarMode !== "shared") {
-      setSharedModalOpen(false);
+      setSharedDrawerOpen(false);
     }
   }, [calendarMode]);
+
+  useEffect(() => {
+    if (!sharedDrawerOpen || calendarMode !== "shared") {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (sharedDrawerRef.current?.contains(target)) {
+        return;
+      }
+      if (sharedCalendarRef.current?.contains(target)) {
+        return;
+      }
+      setSharedDrawerOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [calendarMode, sharedDrawerOpen]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -903,6 +997,22 @@ function AppPageContent() {
   }, [colorPickerOpen]);
 
   useEffect(() => {
+    if (!sharedColorPickerOpen) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!sharedColorPickerRef.current) {
+        return;
+      }
+      if (!sharedColorPickerRef.current.contains(event.target as Node)) {
+        setSharedColorPickerOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [sharedColorPickerOpen]);
+
+  useEffect(() => {
     if (!timePickerOpen) {
       return;
     }
@@ -948,6 +1058,7 @@ function AppPageContent() {
     () => sharedCalendars.find((calendar) => calendar.id === selectedSharedId) ?? null,
     [sharedCalendars, selectedSharedId]
   );
+  const activeSharedCalendar = sharedCalendarDetail ?? selectedSharedCalendar;
   const inviteModalCalendar = useMemo(() => {
     if (!sharedInviteCalendarId) {
       return null;
@@ -956,13 +1067,23 @@ function AppPageContent() {
   }, [sharedCalendars, sharedInviteCalendarId]);
 
   const sharedPartnerId = useMemo(() => {
-    if (!user || !selectedSharedCalendar) {
+    if (!user || !activeSharedCalendar) {
       return null;
     }
     return (
-      selectedSharedCalendar.memberIds.find((memberId) => memberId !== user.uid) ?? null
+      activeSharedCalendar.memberIds.find((memberId) => memberId !== user.uid) ?? null
     );
-  }, [selectedSharedCalendar, user]);
+  }, [activeSharedCalendar, user]);
+
+  const sharedPartnerColors = useMemo(() => {
+    if (!sharedPartnerId || !activeSharedCalendar?.memberColors) {
+      return defaultSharedItemColors;
+    }
+    return {
+      ...defaultSharedItemColors,
+      ...(activeSharedCalendar.memberColors[sharedPartnerId] ?? {}),
+    };
+  }, [activeSharedCalendar, sharedPartnerId]);
 
   useEffect(() => {
     if (!user || calendarMode !== "shared") {
@@ -980,6 +1101,20 @@ function AppPageContent() {
     setSharedEditingEntry(normalizeSharedEntry(sourceEntry));
     setSharedSaveError(null);
   }, [calendarMode, selectedDate, sharedEditingDirty, sharedMonthData, user]);
+
+  useEffect(() => {
+    if (!user || calendarMode !== "shared") {
+      return;
+    }
+    const storedColors = activeSharedCalendar?.memberColors?.[user.uid];
+    if (!storedColors) {
+      return;
+    }
+    setSharedItemColors({
+      ...defaultSharedItemColors,
+      ...storedColors,
+    });
+  }, [activeSharedCalendar, calendarMode, user]);
 
   const commitSharedEntry = async (nextEntry: SharedEntry) => {
     if (!user || !selectedSharedId) {
@@ -1022,6 +1157,7 @@ function AppPageContent() {
     };
     try {
       await setDoc(ref, payload, { merge: true });
+      setSharedEditingDirty(false);
     } catch (error) {
       setSharedSaveError("保存に失敗しました。再度お試しください。");
       setSharedEditingDirty(false);
@@ -1086,6 +1222,9 @@ function AppPageContent() {
           photoURL: user.photoURL ?? null,
           joinedAt: serverTimestamp(),
         },
+      },
+      memberColors: {
+        [user.uid]: defaultSharedItemColors,
       },
       inviteCode,
       createdAt: serverTimestamp(),
@@ -1173,7 +1312,7 @@ function AppPageContent() {
   };
 
   useEffect(() => {
-    if (!user || calendarMode !== "shared") {
+    if (!user) {
       return;
     }
     const inviteCode = searchParams?.get("invite");
@@ -1182,7 +1321,7 @@ function AppPageContent() {
     }
     handledInviteCodeRef.current = inviteCode;
     joinSharedCalendarByCode(inviteCode);
-  }, [calendarMode, joinSharedCalendarByCode, searchParams, user]);
+  }, [joinSharedCalendarByCode, searchParams, user]);
 
   const getInviteLink = (code: string) => {
     if (typeof window === "undefined") {
@@ -1206,10 +1345,11 @@ function AppPageContent() {
     value: SharedMealStatus
   ) => {
     updateSharedEntry((prev) => {
-      if (meal === "dinner" && value !== "ok" && value !== "maybe") {
-        return { ...prev, dinner: value, dinnerSlots: [] };
+      const nextValue = prev[meal] === value ? "unset" : value;
+      if (meal === "dinner" && nextValue !== "ok" && nextValue !== "maybe") {
+        return { ...prev, dinner: nextValue, dinnerSlots: [] };
       }
-      return { ...prev, [meal]: value } as SharedEntry;
+      return { ...prev, [meal]: nextValue } as SharedEntry;
     });
   };
 
@@ -1218,7 +1358,7 @@ function AppPageContent() {
       const current = prev.dinnerSlots;
       const exists = current.includes(slot);
       const next = exists
-        ? current.filter((value) => value !== slot)
+        ? current.filter((value) => value !== slot).sort((a, b) => a - b)
         : [...current, slot].sort((a, b) => a - b);
       return { ...prev, dinnerSlots: next };
     });
@@ -1387,41 +1527,72 @@ function AppPageContent() {
     return chips;
   };
 
-  const renderSharedCompact = (entry: SharedEntry) => {
-    const dinnerRange = formatDinnerRanges(entry.dinnerSlots);
-    const selectedChores = sharedChoreItems
-      .filter((item) => entry.chores[item.id])
-      .map((item) => item.short);
-    const visibleChores = selectedChores.slice(0, 4);
-    const extraChores = selectedChores.length - visibleChores.length;
+  const buildSharedLines = (entry: SharedEntry, colorMap: Record<string, ColorId>) => {
+    const lines: { id: string; label: string; className: string }[] = [];
+    if (sharedFilters["shared-breakfast"] && entry.breakfast !== "unset") {
+      lines.push({
+        id: "shared-breakfast",
+        label: `朝：${sharedMealStatusLabel[entry.breakfast]}`,
+        className: colorStyles[colorMap["shared-breakfast"]].chip,
+      });
+    }
+    if (sharedFilters["shared-lunch"] && entry.lunch !== "unset") {
+      lines.push({
+        id: "shared-lunch",
+        label: `昼：${sharedMealStatusLabel[entry.lunch]}`,
+        className: colorStyles[colorMap["shared-lunch"]].chip,
+      });
+    }
+    if (sharedFilters["shared-dinner"] && entry.dinner !== "unset") {
+      lines.push({
+        id: "shared-dinner",
+        label: `夜：${sharedMealStatusLabel[entry.dinner]}`,
+        className: colorStyles[colorMap["shared-dinner"]].chip,
+      });
+    }
+    if (sharedFilters["shared-dinner-slots"] && entry.dinnerSlots.length > 0) {
+      lines.push({
+        id: "shared-dinner-slots",
+        label: formatDinnerRanges(entry.dinnerSlots),
+        className: colorStyles[colorMap["shared-dinner-slots"]].chip,
+      });
+    }
+    sharedChoreItems.forEach((item) => {
+      if (!sharedFilters[`shared-${item.id}`]) {
+        return;
+      }
+      if (!entry.chores[item.id]) {
+        return;
+      }
+      lines.push({
+        id: `shared-${item.id}`,
+        label: item.label,
+        className: colorStyles[colorMap[`shared-${item.id}`]].chip,
+      });
+    });
+    return lines;
+  };
+
+  const renderSharedCompact = (entry: SharedEntry, colorMap: Record<string, ColorId>) => {
+    const lines = buildSharedLines(entry, colorMap);
+    const visible = lines.slice(0, 4);
+    const extraCount = lines.length - visible.length;
     return (
-      <>
-        <div className="text-[10px] text-zinc-500">
-          朝{sharedMealStatusLabel[entry.breakfast]} 昼{sharedMealStatusLabel[entry.lunch]}{" "}
-          夜{sharedMealStatusLabel[entry.dinner]}
-        </div>
-        {dinnerRange ? (
-          <div className="truncate text-[9px] text-zinc-400">{dinnerRange}</div>
+      <div className="space-y-0.5 text-[10px] text-zinc-500">
+        {visible.map((line) => (
+          <div
+            key={line.id}
+            className={`truncate rounded px-1 py-0.5 ${line.className}`}
+          >
+            {line.label}
+          </div>
+        ))}
+        {extraCount > 0 ? (
+          <div className="truncate rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500">
+            +{extraCount}
+          </div>
         ) : null}
-        <div className="flex flex-wrap gap-0.5 text-[9px] text-zinc-500">
-          {visibleChores.map((short) => (
-            <span
-              key={short}
-              className="rounded bg-zinc-100 px-1 py-0.5 text-[9px] text-zinc-500"
-            >
-              {short}
-            </span>
-          ))}
-          {extraChores > 0 ? (
-            <span className="rounded bg-zinc-100 px-1 py-0.5 text-[9px] text-zinc-500">
-              +{extraChores}
-            </span>
-          ) : null}
-          {selectedChores.length === 0 ? (
-            <span className="text-[9px] text-zinc-300">-</span>
-          ) : null}
-        </div>
-      </>
+      </div>
     );
   };
 
@@ -1437,6 +1608,43 @@ function AppPageContent() {
 
   const updateFilter = (id: FilterItemId, checked: boolean) => {
     setFilters((prev) => ({ ...prev, [id]: checked }));
+  };
+
+  const toggleSharedGroup = (
+    group: (typeof sharedFilterGroups)[number],
+    checked: boolean
+  ) => {
+    setSharedFilters((prev) => {
+      const next = { ...prev };
+      group.items.forEach((item) => {
+        next[item.id] = checked;
+      });
+      return next;
+    });
+  };
+
+  const updateSharedFilter = (id: string, checked: boolean) => {
+    setSharedFilters((prev) => ({ ...prev, [id]: checked }));
+  };
+
+  const updateSharedItemColor = (itemId: string, colorId: ColorId) => {
+    setSharedColorPickerOpen(null);
+    const nextColors = { ...sharedItemColors, [itemId]: colorId };
+    setSharedItemColors(nextColors);
+    if (!user || !selectedSharedId) {
+      return;
+    }
+    const calendarRef = doc(db, "sharedCalendars", selectedSharedId);
+    setDoc(
+      calendarRef,
+      {
+        memberColors: {
+          [user.uid]: nextColors,
+        },
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch((error) => console.error(error));
   };
 
   const updateItemColor = async (itemId: FilterItemId, colorId: ColorId) => {
@@ -1783,14 +1991,6 @@ function AppPageContent() {
 
   const selectedDateId = formatDateId(selectedDate);
   const displayDate = `${selectedDate.getFullYear()}/${selectedDate.getMonth() + 1}/${selectedDate.getDate()}`;
-  const selectedSharedDayDoc = sharedMonthData[selectedDateId];
-  const sharedPartnerEntry = sharedPartnerId
-    ? normalizeSharedEntry(selectedSharedDayDoc?.entries?.[sharedPartnerId])
-    : null;
-  const sharedPartnerInfo = sharedPartnerId
-    ? selectedSharedCalendar?.memberInfo?.[sharedPartnerId]
-    : null;
-  const sharedSelfInfo = user ? selectedSharedCalendar?.memberInfo?.[user.uid] : null;
   const canEditDinnerSlots =
     sharedEditingEntry.dinner === "ok" || sharedEditingEntry.dinner === "maybe";
 
@@ -1804,7 +2004,7 @@ function AppPageContent() {
   const editingCustomItem = editingCustomId
     ? customItems.find((item) => item.id === editingCustomId) ?? null
     : null;
-  const sharedInviteCode = selectedSharedCalendar?.inviteCode ?? "";
+  const sharedInviteCode = activeSharedCalendar?.inviteCode ?? "";
   const sharedInviteLink = sharedInviteCode ? getInviteLink(sharedInviteCode) : "";
   const inviteModalName =
     inviteModalCalendar?.name ?? sharedInvitePreview?.name ?? "";
@@ -2029,33 +2229,81 @@ function AppPageContent() {
   );
 
   const renderSharedCategories = () => (
-    <div className="mt-4 space-y-4 text-sm text-zinc-700">
-      <div className="space-y-2">
-        <div className="text-xs font-semibold text-zinc-500">食事</div>
-        <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
-          {["朝", "昼", "夜", "夜の時間帯"].map((label) => (
-            <span
-              key={label}
-              className="rounded-full border border-zinc-200 px-2 py-0.5"
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="space-y-2">
-        <div className="text-xs font-semibold text-zinc-500">家事</div>
-        <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
-          {sharedChoreItems.map((item) => (
-            <span
-              key={item.id}
-              className="rounded-full border border-zinc-200 px-2 py-0.5"
-            >
-              {item.label}
-            </span>
-          ))}
-        </div>
-      </div>
+    <div className="mt-4 space-y-3 text-sm text-zinc-700">
+      {sharedFilterGroups.map((group) => {
+        const checkedCount = group.items.filter((item) => sharedFilters[item.id]).length;
+        const allChecked = group.items.length > 0 && checkedCount === group.items.length;
+        const indeterminate = checkedCount > 0 && !allChecked;
+        return (
+          <div key={group.id} className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <label className="flex items-center gap-2 font-medium">
+                <ParentCheckbox
+                  checked={allChecked}
+                  indeterminate={indeterminate}
+                  onChange={(checked) => toggleSharedGroup(group, checked)}
+                />
+                {group.label}
+              </label>
+            </div>
+            <div className="space-y-1 pl-6 text-xs text-zinc-500">
+              {group.items.map((item) => (
+                <div key={item.id} className="flex items-center justify-between">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={sharedFilters[item.id] ?? false}
+                      onChange={(event) =>
+                        updateSharedFilter(item.id, event.target.checked)
+                      }
+                      className="h-3.5 w-3.5 rounded border-zinc-300"
+                    />
+                    {item.label}
+                  </label>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSharedColorPickerOpen(
+                          sharedColorPickerOpen === item.id ? null : item.id
+                        )
+                      }
+                      className={`h-3.5 w-3.5 rounded-full border border-white shadow ${
+                        colorStyles[sharedItemColors[item.id] ?? "cyan"].dot
+                      }`}
+                      aria-label={`${item.label}の色を選択`}
+                    />
+                    {sharedColorPickerOpen === item.id ? (
+                      <div
+                        ref={sharedColorPickerRef}
+                        className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
+                      >
+                        <div className="grid grid-cols-4 gap-2">
+                          {colorPalette.map((color) => (
+                            <button
+                              key={color.id}
+                              type="button"
+                              onClick={() =>
+                                updateSharedItemColor(item.id, color.id as ColorId)
+                              }
+                              className={`h-6 w-6 rounded-full border ${
+                                color.id === sharedItemColors[item.id]
+                                  ? "border-zinc-900"
+                                  : "border-transparent"
+                              } ${color.dot}`}
+                              aria-label={`${color.label}を選択`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -2274,7 +2522,7 @@ function AppPageContent() {
                   </div>
                 ) : null}
               </div>
-              {calendarMode === "shared" && selectedSharedCalendar ? (
+              {calendarMode === "shared" && activeSharedCalendar ? (
                 <div className="mt-4 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                   <div className="font-semibold text-zinc-700">招待リンク</div>
                   <div className="break-all">{sharedInviteLink || "リンク生成中..."}</div>
@@ -2318,7 +2566,10 @@ function AppPageContent() {
         </section>
 
         <section className="min-w-0 flex-1">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div
+            ref={sharedCalendarRef}
+            className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+          >
             <div className="grid grid-cols-7 gap-2 border-b border-zinc-100 pb-2 text-center text-xs font-semibold text-zinc-500">
               {weekdays.map((day) => (
                 <div key={day}>{day}</div>
@@ -2361,7 +2612,7 @@ function AppPageContent() {
                     onClick={() => {
                       setSelectedDate(date);
                       if (calendarMode === "shared") {
-                        setSharedModalOpen(true);
+                        setSharedDrawerOpen(true);
                         return;
                       }
                       if (isMobile) {
@@ -2384,20 +2635,12 @@ function AppPageContent() {
                     {calendarMode === "shared" ? (
                       <div className="mt-1 grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <div className="text-[10px] font-semibold text-zinc-400">
-                            自分
-                          </div>
-                          {renderSharedCompact(sharedSelf)}
+                          {renderSharedCompact(sharedSelf, sharedItemColors)}
                         </div>
                         <div className="space-y-1">
-                          <div className="text-[10px] font-semibold text-zinc-400">
-                            相手
-                          </div>
-                          {sharedPartner ? (
-                            renderSharedCompact(sharedPartner)
-                          ) : (
-                            <div className="text-[10px] text-zinc-300">未参加</div>
-                          )}
+                          {sharedPartner
+                            ? renderSharedCompact(sharedPartner, sharedPartnerColors)
+                            : null}
                         </div>
                       </div>
                     ) : (
@@ -2792,197 +3035,103 @@ function AppPageContent() {
           </section>
         ) : null}
       </main>
-      {sharedModalOpen && calendarMode === "shared" ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-4xl rounded-2xl bg-white p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-zinc-900">共有カレンダー</h2>
-                <p className="text-xs text-zinc-500">{displayDate}</p>
-              </div>
+      {calendarMode === "shared" ? (
+        <aside
+          ref={sharedDrawerRef}
+          className={`fixed inset-y-0 right-0 z-50 w-full max-w-sm transform border-l border-zinc-200 bg-white p-4 shadow-lg transition-transform ${
+            sharedDrawerOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="h-full overflow-y-auto">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">{displayDate}</h2>
               <button
                 type="button"
-                onClick={() => setSharedModalOpen(false)}
+                onClick={() => setSharedDrawerOpen(false)}
                 className="inline-flex h-8 w-8 items-center justify-center rounded border border-zinc-200 text-zinc-500"
-                aria-label="モーダルを閉じる"
+                aria-label="パネルを閉じる"
               >
                 ✕
               </button>
             </div>
             {sharedSaveError ? (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
                 {sharedSaveError}
               </div>
             ) : null}
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-xl border border-zinc-200 p-4">
+            <div className="space-y-6 text-sm">
+              <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  {sharedSelfInfo?.photoURL ? (
-                    <Image
-                      src={sharedSelfInfo.photoURL}
-                      alt={sharedSelfInfo.displayName}
-                      width={32}
-                      height={32}
-                      className="h-8 w-8 rounded-full object-cover"
-                    />
-                  ) : (
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-200 text-xs text-zinc-500">
-                      自
-                    </span>
-                  )}
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-700">自分</div>
-                    <div className="text-xs text-zinc-500">
-                      {sharedSelfInfo?.displayName ?? "自分"}
-                    </div>
-                  </div>
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">食事</h3>
                 </div>
-                <div className="mt-4 space-y-4 text-sm">
-                  <div className="space-y-3">
-                    <div className="text-xs font-semibold text-zinc-500">食事</div>
-                    {renderSharedMealPicker("朝", sharedEditingEntry.breakfast, (next) =>
-                      updateSharedMealStatus("breakfast", next)
-                    )}
-                    {renderSharedMealPicker("昼", sharedEditingEntry.lunch, (next) =>
-                      updateSharedMealStatus("lunch", next)
-                    )}
-                    {renderSharedMealPicker("夜", sharedEditingEntry.dinner, (next) =>
-                      updateSharedMealStatus("dinner", next)
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold text-zinc-500">夜の時間帯</div>
-                    <div
-                      className={`grid grid-cols-3 gap-2 ${
-                        canEditDinnerSlots ? "" : "opacity-40"
-                      }`}
-                    >
-                      {sharedDinnerSlots.map((slot) => {
-                        const active = sharedEditingEntry.dinnerSlots.includes(slot);
-                        return (
-                          <button
-                            key={slot}
-                            type="button"
-                            disabled={!canEditDinnerSlots}
-                            onClick={() => toggleSharedDinnerSlot(slot)}
-                            className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-                              active
-                                ? "border-zinc-900 bg-zinc-900 text-white"
-                                : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
-                            } ${!canEditDinnerSlots ? "cursor-not-allowed" : ""}`}
-                          >
-                            {slot}:00
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {!canEditDinnerSlots ? (
-                      <div className="text-[11px] text-zinc-400">
-                        夜が○または△のときに選択できます。
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold text-zinc-500">家事</div>
-                    <div className="space-y-2">
-                      {sharedChoreItems.map((item) => (
-                        <label key={item.id} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={sharedEditingEntry.chores[item.id]}
-                            onChange={() => toggleSharedChore(item.id)}
-                            className="h-4 w-4 rounded border-zinc-300"
-                          />
-                          {item.label}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-                <div className="flex items-center gap-2">
-                  {sharedPartnerInfo?.photoURL ? (
-                    <Image
-                      src={sharedPartnerInfo.photoURL}
-                      alt={sharedPartnerInfo.displayName}
-                      width={32}
-                      height={32}
-                      className="h-8 w-8 rounded-full object-cover"
-                    />
-                  ) : (
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-200 text-xs text-zinc-500">
-                      相
-                    </span>
-                  )}
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-700">相手</div>
-                    <div className="text-xs text-zinc-500">
-                      {sharedPartnerInfo?.displayName ?? "未参加"}
-                    </div>
-                  </div>
-                </div>
-                {sharedPartnerEntry ? (
-                  <div className="mt-4 space-y-4 text-sm text-zinc-600">
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold text-zinc-500">食事</div>
-                      {renderSharedMealPicker(
-                        "朝",
-                        sharedPartnerEntry.breakfast,
-                        () => undefined,
-                        true
-                      )}
-                      {renderSharedMealPicker(
-                        "昼",
-                        sharedPartnerEntry.lunch,
-                        () => undefined,
-                        true
-                      )}
-                      {renderSharedMealPicker(
-                        "夜",
-                        sharedPartnerEntry.dinner,
-                        () => undefined,
-                        true
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold text-zinc-500">夜の時間帯</div>
-                      <div className="text-xs text-zinc-500">
-                        {sharedPartnerEntry.dinnerSlots.length > 0
-                          ? formatDinnerRanges(sharedPartnerEntry.dinnerSlots)
-                          : "未選択"}
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold text-zinc-500">家事</div>
-                      <div className="space-y-2">
-                        {sharedChoreItems.map((item) => (
-                          <label
-                            key={item.id}
-                            className="flex items-center gap-2 text-sm text-zinc-500"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={sharedPartnerEntry.chores[item.id]}
-                              readOnly
-                              disabled
-                              className="h-4 w-4 rounded border-zinc-300"
-                            />
-                            {item.label}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 text-sm text-zinc-400">
-                    まだ相手が参加していません。
-                  </div>
+                {renderSharedMealPicker("朝", sharedEditingEntry.breakfast, (next) =>
+                  updateSharedMealStatus("breakfast", next)
                 )}
+                {renderSharedMealPicker("昼", sharedEditingEntry.lunch, (next) =>
+                  updateSharedMealStatus("lunch", next)
+                )}
+                {renderSharedMealPicker("夜", sharedEditingEntry.dinner, (next) =>
+                  updateSharedMealStatus("dinner", next)
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">夜の時間帯</h3>
+                </div>
+                <div
+                  className={`grid grid-cols-3 gap-2 ${
+                    canEditDinnerSlots ? "" : "opacity-40"
+                  }`}
+                >
+                  {sharedDinnerSlots.map((slot) => {
+                    const active = sharedEditingEntry.dinnerSlots.includes(slot);
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        disabled={!canEditDinnerSlots}
+                        onClick={() => toggleSharedDinnerSlot(slot)}
+                        className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                          active
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 text-zinc-600 hover:border-zinc-400"
+                        } ${!canEditDinnerSlots ? "cursor-not-allowed" : ""}`}
+                      >
+                        {slot}:00
+                      </button>
+                    );
+                  })}
+                </div>
+                {!canEditDinnerSlots ? (
+                  <div className="text-[11px] text-zinc-400">
+                    夜が○または△のときに選択できます。
+                  </div>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-zinc-900/70" />
+                  <h3 className="text-xs font-semibold text-zinc-700">家事</h3>
+                </div>
+                <div className="space-y-2">
+                  {sharedChoreItems.map((item) => (
+                    <label key={item.id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={sharedEditingEntry.chores[item.id]}
+                        onChange={() => toggleSharedChore(item.id)}
+                        className="h-4 w-4 rounded border-zinc-300"
+                      />
+                      {item.label}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </aside>
       ) : null}
       {sharedCreateModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -3366,7 +3515,7 @@ function AppPageContent() {
                     </div>
                   ) : null}
                 </div>
-                {calendarMode === "shared" && selectedSharedCalendar ? (
+              {calendarMode === "shared" && activeSharedCalendar ? (
                   <div className="mt-3 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                     <div className="font-semibold text-zinc-700">招待リンク</div>
                     <div className="break-all">{sharedInviteLink || "リンク生成中..."}</div>
