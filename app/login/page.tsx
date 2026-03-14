@@ -1,20 +1,13 @@
 "use client";
 
-import {
-  GoogleAuthProvider,
-  getRedirectResult,
-  signInWithPopup,
-  signInWithRedirect,
-} from "firebase/auth";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { auth } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { GoogleLoginButton } from "@/components/GoogleLoginButton";
 
 export default function LoginPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,40 +16,8 @@ export default function LoginPage() {
     }
   }, [loading, router, user]);
 
-  useEffect(() => {
-    const handleRedirect = async () => {
-      try {
-        await getRedirectResult(auth);
-      } catch (error) {
-        setErrorMessage("ログインに失敗しました。もう一度お試しください。");
-        console.error(error);
-      }
-    };
-
-    handleRedirect();
-  }, []);
-
-  const handleLogin = async () => {
-    setSubmitting(true);
-    setErrorMessage(null);
-    try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithPopup(auth, provider);
-      router.replace("/app");
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user") {
-        const provider = new GoogleAuthProvider();
-        provider.setCustomParameters({ prompt: "select_account" });
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-      setErrorMessage("ログインに失敗しました。もう一度お試しください。");
-      console.error(error);
-    } finally {
-      setSubmitting(false);
-    }
+  const handleSuccess = () => {
+    router.replace("/app");
   };
 
   return (
@@ -68,17 +29,15 @@ export default function LoginPage() {
               Routine Calendar
             </h1>
             <p className="text-sm text-zinc-600">
-              Googleアカウントでログインします。
+              月カレンダーで毎日のルーティンを可視化
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleLogin}
-            disabled={submitting || loading}
-            className="inline-flex h-12 w-full items-center justify-center rounded-full bg-zinc-900 px-6 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
-          >
-            {submitting ? "ログイン中..." : "Googleでログイン"}
-          </button>
+          <GoogleLoginButton
+            onSuccess={handleSuccess}
+            onError={setErrorMessage}
+            disabled={loading}
+            className="w-full"
+          />
           {errorMessage ? (
             <div className="text-xs text-red-600">{errorMessage}</div>
           ) : null}

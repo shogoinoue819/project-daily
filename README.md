@@ -65,7 +65,10 @@ NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
 NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
 NEXT_PUBLIC_FIREBASE_APP_ID=...
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=...  # Google Cloud Console の OAuth 2.0 クライアント ID（Web アプリケーション）
 ```
+
+`NEXT_PUBLIC_GOOGLE_CLIENT_ID` は、Firebase Console の Authentication → Sign-in method → Google の「Web SDK の設定」に表示される Web クライアント ID、または [Google Cloud Console](https://console.cloud.google.com/apis/credentials) の OAuth 2.0 クライアント ID を指定してください。
 
 ## インストール
 ```bash
@@ -80,11 +83,15 @@ npm run dev
 起動後 `http://localhost:3000` にアクセスし、Googleログイン後に `/app` が表示されます。
 
 # デプロイ
-- Vercel の環境変数に `.env.local` と同じ `NEXT_PUBLIC_FIREBASE_*` を登録
+- Vercel の環境変数に `.env.local` と同じ `NEXT_PUBLIC_FIREBASE_*` および `NEXT_PUBLIC_GOOGLE_CLIENT_ID` を登録
 - Firebase Console の Authentication → Authorized domains に
   - `localhost`
   - `your-app.vercel.app`
   を追加
+- Google Cloud Console の OAuth 2.0 クライアントの「承認済みの JavaScript 生成元」に
+  - `http://localhost:3000`
+  - `https://your-app.vercel.app`
+  を追加（GSI 用）
 
 # 補足
 - Authentication は Google のみ有効化されています。
